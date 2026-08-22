@@ -36,10 +36,13 @@ export function createDifficulty() {
     speed = approach(DIFFICULTY.speedStart, DIFFICULTY.speedMax, distance, DIFFICULTY.speedTau);
     gapHeight = approach(DIFFICULTY.gapStart, DIFFICULTY.gapMin, distance, DIFFICULTY.gapTau);
 
-    // Свободного полёта между колоннами столько, сколько мир едет от правого
-    // края одной до левого края следующей. Больше этого подъёма требовать
-    // нечестно: игрок физически не успеет, сколько бы он ни тапал.
-    const freeFlight = (OBSTACLES.interval - OBSTACLES.columnWidth) / speed;
+    // Свободного полёта между лианами столько, сколько мир едет от правого края
+    // одной до левого края следующей — МИНУС ширина самого игрока: пока он
+    // перекрывается с лианой по горизонтали, маневрировать по высоте нельзя.
+    // Без вычитания диаметра предел подъёма завышался почти вдвое, и на
+    // крупном герое проходы начинали ставиться недостижимо.
+    const clearRun = OBSTACLES.interval - OBSTACLES.columnWidth - PLAYER.radius * 2;
+    const freeFlight = Math.max(0, clearRun) / speed;
     maxGapShift = Math.min(
       DIFFICULTY.gapShiftCeiling,
       CLIMB_RATE * freeFlight * DIFFICULTY.gapShiftSafety,

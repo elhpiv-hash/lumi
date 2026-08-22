@@ -1,6 +1,7 @@
-import { VIEW, BACKGROUND, COLORS } from '../config.js';
+import { VIEW, PIXEL, BACKGROUND, COLORS } from '../config.js';
 
-const TAU = Math.PI * 2;
+/** Размер одного пикселя буфера в мировых единицах. */
+const UNIT = 1 / PIXEL.perUnit;
 
 /**
  * Фон: небо, которое теплеет с прогрессом, два слоя далёкого боке и рама,
@@ -75,16 +76,17 @@ export function createBackground() {
         const x = view.left + ((raw % span) + span) % span;
         const y = view.top + heights[i] * view.height;
 
-        // Боке вместо точки: два круга с разной прозрачностью дают мягкий
-        // ореол дешевле, чем радиальный градиент на каждый огонёк.
-        ctx.globalAlpha = spec.alpha * 0.45;
-        ctx.beginPath();
-        ctx.arc(x, y, spec.size * 1.9, 0, TAU);
-        ctx.fill();
+        // Боке из двух квадратов по пиксельной сетке: круг через arc дал бы
+        // сглаженный край, и после растягивания буфера он превратился бы
+        // в грязную кайму.
+        const outer = Math.max(UNIT, Math.round(spec.size * 1.8 / UNIT) * UNIT);
+        const inner = Math.max(UNIT, Math.round(spec.size / UNIT) * UNIT);
+        const px = Math.round(x / UNIT) * UNIT;
+        const py = Math.round(y / UNIT) * UNIT;
+        ctx.globalAlpha = spec.alpha * 0.4;
+        ctx.fillRect(px - outer / 2, py - outer / 2, outer, outer);
         ctx.globalAlpha = spec.alpha;
-        ctx.beginPath();
-        ctx.arc(x, y, spec.size, 0, TAU);
-        ctx.fill();
+        ctx.fillRect(px - inner / 2, py - inner / 2, inner, inner);
       }
     }
 

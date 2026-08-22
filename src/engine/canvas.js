@@ -1,24 +1,31 @@
-import { VIEW } from '../config.js';
+import { VIEW, PIXEL } from '../config.js';
 
 /**
- * Canvas и система координат.
+ * Холст, система координат и пиксельный буфер.
  *
  * Экраны разные, поэтому рисуем в мировых единицах, а не в пикселях.
  * Масштаб подбираем по правилу «contain»: игровое поле CORE от (0,0)
  * до (coreWidth, coreHeight) видно целиком всегда, а излишек экрана по
- * широкой оси уходит за его границы — там будет фон. Поэтому view.left
+ * широкой оси уходит за его границы — там будет рама. Поэтому view.left
  * и view.top обычно отрицательные: это края видимой области, а не поля.
+ *
+ * Пиксельность сделана одним приёмом: игра рисует не на экранный холст, а в
+ * маленький буфер (perUnit пикселей на мировую единицу), и уже он растягивается
+ * на весь экран с выключенным сглаживанием. Так пикселизуется вообще всё —
+ * фон, фигуры, текст — вместо того чтобы подгонять каждую фигуру по отдельности.
  *
  * Два режима трансформации:
  *   beginWorld()  — координаты в wu, для всей игры;
- *   beginScreen() — координаты в CSS-пикселях, для HUD и текста (так он чёткий).
+ *   beginScreen() — координаты в пикселях буфера, для отладочного оверлея.
  */
 export function createRenderer(canvas) {
-  const ctx = canvas.getContext('2d', { alpha: false });
+  const screen = canvas.getContext('2d', { alpha: false });
+  const buffer = document.createElement('canvas');
+  const ctx = buffer.getContext('2d', { alpha: false });
 
   const view = {
     dpr: 1,
-    scale: 1,          // пикселей на одну мировую единицу
+    scale: 1,          // css-пикселей на одну мировую единицу
     cssWidth: 0,
     cssHeight: 0,
     width: 0,          // видимая область в wu
@@ -27,6 +34,8 @@ export function createRenderer(canvas) {
     top: 0,
     right: 0,
     bottom: 0,
+    bufferWidth: 0,
+    bufferHeight: 0,
   };
 
   function resize() {
@@ -51,6 +60,13 @@ export function createRenderer(canvas) {
     view.right = view.left + view.width;
     view.bottom = view.top + view.height;
 
+    view.bufferWidth = Math.max(1, Math.ceil(view.width * PIXEL.perUnit));
+    view.bufferHeight = Math.max(1, Math.ceil(view.height * PIXEL.perUnit));
+    if (buffer.width !== view.bufferWidth || buffer.height !== view.bufferHeight) {
+      buffer.width = view.bufferWidth;
+      buffer.height = view.bufferHeight;
+    }
+
     // Смена width/height чистит холст, поэтому трогаем их только при реальном изменении.
     const pixelWidth = Math.round(cssWidth * dpr);
     const pixelHeight = Math.round(cssHeight * dpr);
@@ -58,15 +74,27 @@ export function createRenderer(canvas) {
       canvas.width = pixelWidth;
       canvas.height = pixelHeight;
     }
+    // Сбрасывается вместе с размером холста, поэтому ставим здесь.
+    screen.imageSmoothingEnabled = false;
   }
 
   function beginWorld() {
-    const k = view.scale * view.dpr;
+    const k = PIXEL.perUnit;
     ctx.setTransform(k, 0, 0, k, -view.left * k, -view.top * k);
   }
 
   function beginScreen() {
-    ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /** Растягивает буфер на весь экран. Без сглаживания — в этом весь смысл. */
+  function present() {
+    screen.imageSmoothingEnabled = false;
+    screen.drawImage(
+      buffer,
+      0, 0, view.bufferWidth, view.bufferHeight,
+      0, 0, canvas.width, canvas.height,
+    );
   }
 
   // ResizeObserver ловит и поворот экрана, и схлопывание адресной строки на мобилке —
@@ -81,5 +109,5 @@ export function createRenderer(canvas) {
     window.removeEventListener('orientationchange', resize);
   }
 
-  return { ctx, view, beginWorld, beginScreen, resize, dispose };
+  return { ctx, view, beginWorld, beginScreen, present, resize, dispose };
 }

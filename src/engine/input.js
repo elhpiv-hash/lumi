@@ -6,15 +6,17 @@
  * touchstart, а на случай браузеров, которые досылают их всё равно, стоит
  * второй заслон по времени.
  *
- * Наружу отдаём и координаты нажатия: в углу поля живёт кнопка звука, и решать,
- * попал ли тап по ней, должен тот, кто знает про интерфейс. С клавиатуры
+ * Наружу отдаём и координаты нажатия: в углах поля живут кнопки, и решать,
+ * попал ли тап по ним, должен тот, кто знает про интерфейс. С клавиатуры
  * координат нет, поэтому туда уходит NaN.
+ *
+ * Пауза висит на Escape и P, звук на M.
  */
 
 /** Совместимостный mousedown прилетает вплотную за касанием; такие игнорируем. */
 const MOUSE_AFTER_TOUCH_MS = 500;
 
-export function createInput(target, { onFlap, onToggleSound }) {
+export function createInput(target, { onFlap, onToggleSound, onPause }) {
   let lastTouchAt = -Infinity;
 
   function report(clientX, clientY) {
@@ -43,6 +45,10 @@ export function createInput(target, { onFlap, onToggleSound }) {
   function onKeyDown(event) {
     if (event.code === 'KeyM') {
       onToggleSound();
+      return;
+    }
+    if (event.code === 'Escape' || event.code === 'KeyP') {
+      onPause();
       return;
     }
     // event.repeat: зажатый пробел не должен сыпать взмахами по автоповтору.

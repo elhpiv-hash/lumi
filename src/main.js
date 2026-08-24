@@ -1,10 +1,12 @@
-import { LOOP, VIEW, PIXEL, PLAYER, FACE, OBSTACLES, JUICE, HUD, COLORS, DEBUG } from './config.js';
+import { LOOP, VIEW, PIXEL, PLAYER, FACE, OBSTACLES, SPARKS, JUICE, HUD, COLORS, DEBUG } from './config.js';
 import { createRenderer } from './engine/canvas.js';
 import { createLoop } from './engine/loop.js';
 import { createInput } from './engine/input.js';
 import { createAudio } from './engine/audio.js';
 import { createGame, STATE } from './game/states.js';
 import { createBackground } from './game/background.js';
+import { SKINS, isUnlocked, nextLocked, stepSkin, unlockedBetween, unlockedCount } from './game/skins.js';
+import { getSkinIndex, setSkinIndex } from './platform/storage.js';
 
 /**
  * Шрифт нарочно круглый и детский. Порядок стека и решает вид: на Windows
@@ -23,8 +25,48 @@ const audio = createAudio();
 const game = createGame(audio);
 const background = createBackground();
 
-/** Кнопка звука хранится в мировых единицах — тап переводим в мир, а не наоборот. */
-const muteTarget = { x: 0, y: 0, radius: 0 };
+/**
+ * Кнопки хранятся в мировых координатах, а тап переводится в мир — а не
+ * наоборот. Иначе пришлось бы держать отдельную математику для буфера,
+ * css-пикселей и dpr.
+ */
+const buttons = {
+  mute: { x: 0, y: 0, radius: 0, active: true },
+  pause: { x: 0, y: 0, radius: 0, active: false },
+  previousSkin: { x: 0, y: 0, radius: 0, active: false },
+  nextSkin: { x: 0, y: 0, radius: 0, active: false },
+};
+
+let skinIndex = getSkinIndex();
+
+function currentSkin() {
+  return SKINS[Math.min(Math.max(skinIndex, 0), SKINS.length - 1)];
+}
+
+/**
+ * Шлейф и искры взмаха красятся в цвет героя: жёлтые искры за голубым
+ * светлячком выглядели бы чужими. Пресеты — статические объекты, поэтому
+ * правим их один раз на смену скина, а не на каждый выброс частиц.
+ */
+function applySkin() {
+  const skin = currentSkin();
+  SPARKS.trail.color = skin.body;
+  SPARKS.flap.color = skin.belly;
+}
+
+// Рекорд мог обнулиться вместе с хранилищем — тогда выбранный скин окажется
+// заблокированным, и надо честно откатиться на стартовый.
+if (!isUnlocked(currentSkin(), game.score.best)) skinIndex = 0;
+applySkin();
+
+function cycleSkin(direction) {
+  const next = stepSkin(skinIndex, direction, game.score.best);
+  if (next === skinIndex) return;
+  skinIndex = next;
+  setSkinIndex(skinIndex);
+  applySkin();
+  audio.play('score');
+}
 
 // Взмах не применяем прямо в обработчике события: команда легла бы в физику
 // в произвольный момент между шагами, и симуляция снова стала бы зависеть
@@ -36,25 +78,44 @@ createInput(canvas, {
     // Единственное место, где жест пользователя ещё «свежий»: браузеры не дают
     // заводить AudioContext вне обработчика ввода.
     audio.unlock();
-    if (hitsMuteButton(x, y)) {
-      audio.toggle();
-      return;
-    }
+    if (pressButton(x, y)) return;
     flapRequested = true;
   },
   onToggleSound() {
     audio.unlock();
     audio.toggle();
   },
+  onPause() {
+    if (game.state === STATE.playing) game.pause();
+    else if (game.state === STATE.paused) game.resume();
+  },
 });
 
-function hitsMuteButton(cssX, cssY) {
-  if (Number.isNaN(cssX) || muteTarget.radius === 0) return false;
+// Свернули вкладку посреди партии — ставим на паузу, а не роняем игрока об пол.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) game.pause();
+});
+window.addEventListener('blur', () => game.pause());
+
+function pressButton(cssX, cssY) {
+  if (Number.isNaN(cssX)) return false;
   const worldX = view.left + cssX / view.scale;
   const worldY = view.top + cssY / view.scale;
-  const dx = worldX - muteTarget.x;
-  const dy = worldY - muteTarget.y;
-  return dx * dx + dy * dy < muteTarget.radius * muteTarget.radius;
+
+  for (const name of Object.keys(buttons)) {
+    const button = buttons[name];
+    if (!button.active || button.radius === 0) continue;
+    const dx = worldX - button.x;
+    const dy = worldY - button.y;
+    if (dx * dx + dy * dy >= button.radius * button.radius) continue;
+
+    if (name === 'mute') audio.toggle();
+    else if (name === 'pause') game.pause();
+    else if (name === 'previousSkin') cycleSkin(-1);
+    else if (name === 'nextSkin') cycleSkin(1);
+    return true;
+  }
+  return false;
 }
 
 function lerp(from, to, alpha) {
@@ -137,23 +198,30 @@ function update(dt) {
 }
 
 function render(alpha) {
+  const palette = game.biome.palette;
+
   renderer.beginWorld();
-  background.renderSky(ctx, view, game.difficulty.warmth);
-  background.renderStars(ctx, view, lerp(game.difficulty.previousDistance, game.difficulty.distance, alpha));
+  background.renderSky(ctx, view, palette);
+  background.renderStars(ctx, view, lerp(game.difficulty.previousDistance, game.difficulty.distance, alpha), palette);
 
   ctx.save();
   applyShake();
-  renderObstacles(alpha);
+  renderObstacles(alpha, palette);
   renderParticles(alpha);
   renderPlayer(alpha);
   ctx.restore();
 
   // Рама рисуется без тряски: иначе на её краю мелькала бы щель.
   background.renderFrame(ctx, view);
+
+  if (DEBUG.stats) {
+    ctx.strokeStyle = COLORS.coreOutline;
+    ctx.lineWidth = 0.3;
+    ctx.strokeRect(0, 0, VIEW.coreWidth, VIEW.coreHeight);
+  }
+
   renderHud();
   if (DEBUG.stats) renderStats();
-
-  // Буфер готов — растягиваем его на экран без сглаживания.
   renderer.present();
 }
 
@@ -170,11 +238,10 @@ function applyShake() {
 }
 
 /**
- * Препятствия — лианы: тело со ступенчатым торцом, светлая грань для объёма,
- * шляпка у прохода и три ягодки. Обводка рисуется не штрихом, а той же фигурой
- * на пиксель больше: штрих в пиксельной графике всегда мылит край.
+ * Лианы. Цвета берём не из конфига, а из палитры текущего биома — она
+ * перетекает по мере полёта, и вместе с небом перекрашиваются и заросли.
  */
-function renderObstacles(alpha) {
+function renderObstacles(alpha, palette) {
   for (const obstacle of game.obstacles.list) {
     const x = snap(lerp(obstacle.previousX, obstacle.x, alpha));
     const half = obstacle.gapHeight / 2;
@@ -183,36 +250,37 @@ function renderObstacles(alpha) {
 
     // Уводим дальние торцы за поле, чтобы обводка не рисовала линию поперёк
     // экрана. Всё лишнее потом закроет рама.
-    drawVine(x, -8, gapTop + 8, false);
-    drawVine(x, gapBottom, VIEW.coreHeight - gapBottom + 8, true);
+    drawVine(x, -8, gapTop + 8, false, palette);
+    drawVine(x, gapBottom, VIEW.coreHeight - gapBottom + 8, true, palette);
   }
 }
 
-function drawVine(x, y, height, capOnTop) {
+function drawVine(x, y, height, capOnTop, palette) {
   if (height <= 0) return;
   const { columnWidth, capHeight, capOverhang } = OBSTACLES;
   const roundTop = capOnTop;
   const roundBottom = !capOnTop;
 
-  ctx.fillStyle = COLORS.obstacleOutline;
+  // Обводка — та же фигура на пиксель больше: штрих в пиксельной графике мылит край.
+  ctx.fillStyle = palette.vineOutline;
   pixelColumn(x - UNIT, y - UNIT, columnWidth + UNIT * 2, height + UNIT * 2, roundTop, roundBottom);
 
-  ctx.fillStyle = COLORS.obstacle;
+  ctx.fillStyle = palette.vine;
   pixelColumn(x, y, columnWidth, height, roundTop, roundBottom);
 
   const inset = UNIT * 2;
   if (height > inset * 4) {
-    ctx.fillStyle = COLORS.obstacleLight;
+    ctx.fillStyle = palette.vineLight;
     pixelRect(x + inset, y + inset * 2, UNIT * 2, height - inset * 4);
   }
 
   const capY = capOnTop ? y : y + height - capHeight;
-  ctx.fillStyle = COLORS.obstacleOutline;
+  ctx.fillStyle = palette.vineOutline;
   pixelColumn(x - capOverhang - UNIT, capY - UNIT, columnWidth + capOverhang * 2 + UNIT * 2, capHeight + UNIT * 2, true, true);
-  ctx.fillStyle = COLORS.obstacleCap;
+  ctx.fillStyle = palette.vineCap;
   pixelColumn(x - capOverhang, capY, columnWidth + capOverhang * 2, capHeight, true, true);
 
-  ctx.fillStyle = COLORS.obstacleBerry;
+  ctx.fillStyle = palette.berry;
   for (let i = 0; i < 3; i++) {
     pixelCircle(x + columnWidth * (0.2 + i * 0.3), capY + capHeight * 0.5, capHeight * 0.2);
   }
@@ -235,15 +303,16 @@ function renderParticles(alpha) {
 }
 
 /**
- * Светлячок с мордочкой.
+ * Светлячок с мордочкой. Окраска берётся из выбранного скина, всё остальное
+ * общее: глаза, зрачки, улыбка, крылья.
  *
  * Никаких rotate и scale: любой поворот или дробное масштабирование увели бы
  * фигуру с пиксельной сетки, и края поплыли бы. Сплющивание на взмахе делаем
- * честно — разными радиусами эллипса, наклон передаём смещением зрачков
- * и высотой крыльев.
+ * честно — разными радиусами эллипса, наклон передаём смещением зрачков.
  */
 function renderPlayer(alpha) {
   const { x, y, previousY, velocityY } = game.player.state;
+  const skin = currentSkin();
   const centerX = snap(x);
   const centerY = snap(lerp(previousY, y, alpha));
   const radius = PLAYER.radius;
@@ -254,24 +323,28 @@ function renderPlayer(alpha) {
   const radiusY = radius * (1 + stretch);
   const boost = 1 + (game.nearMissTime / JUICE.nearMissFlash) * 0.6;
 
-  ctx.fillStyle = COLORS.playerHalo;
+  ctx.fillStyle = skin.halo;
   pixelCircle(centerX, centerY, radius * 3.2 * boost);
-  ctx.fillStyle = COLORS.playerGlow;
+  ctx.fillStyle = skin.glow;
   pixelCircle(centerX, centerY, radius * 1.9 * boost);
 
   // Крылья: трепет передаём высотой, а не поворотом.
   const beat = 0.55 + Math.sin(clock * FACE.wingRate) * 0.45;
-  const wingHeight = radius * FACE.wingSpan * 0.5 * beat;
   ctx.fillStyle = COLORS.playerWing;
   for (let side = -1; side <= 1; side += 2) {
-    pixelEllipse(centerX + side * radiusX * 0.85, centerY - radiusY * 0.75, radiusX * 0.45, wingHeight);
+    pixelEllipse(
+      centerX + side * radiusX * 0.85,
+      centerY - radiusY * 0.75,
+      radiusX * 0.45,
+      radius * FACE.wingSpan * 0.5 * beat,
+    );
   }
 
-  ctx.fillStyle = COLORS.playerOutline;
+  ctx.fillStyle = skin.outline;
   pixelEllipse(centerX, centerY, radiusX + UNIT, radiusY + UNIT);
-  ctx.fillStyle = COLORS.playerBody;
+  ctx.fillStyle = skin.body;
   pixelEllipse(centerX, centerY, radiusX, radiusY);
-  ctx.fillStyle = COLORS.playerBelly;
+  ctx.fillStyle = skin.belly;
   pixelEllipse(centerX, centerY + radiusY * 0.42, radiusX * 0.5, radiusY * 0.4);
 
   const dizzy = game.state === STATE.dead;
@@ -346,91 +419,162 @@ function renderHud() {
   const raw = Math.min(1, game.stateTime / HUD.fadeIn);
   const appear = raw * raw * (3 - 2 * raw);
   const breathe = 0.62 + 0.38 * Math.sin(game.stateTime * 2.6);
+  const best = game.score.best;
+
+  buttons.pause.active = game.state === STATE.playing;
+  buttons.previousSkin.active = false;
+  buttons.nextSkin.active = false;
 
   if (game.state === STATE.ready) {
     ctx.globalAlpha = appear;
-    write('LUMI', HUD.titleSize, 28, COLORS.hudStrong);
+    write('LUMI', HUD.titleSize, 26, COLORS.hudStrong, 1 + Math.sin(game.clock * 1.6) * 0.03);
     ctx.globalAlpha = appear * breathe;
-    write('тап, чтобы лететь', HUD.hintSize, 68, COLORS.hud);
+    write('тап, чтобы лететь', HUD.hintSize, 60, COLORS.hud);
+
+    ctx.globalAlpha = appear;
+    write(currentSkin().name, HUD.labelSize, HUD.arrowY, COLORS.hudStrong);
+    if (unlockedCount(best) > 1) {
+      buttons.previousSkin.active = true;
+      buttons.nextSkin.active = true;
+      renderSkinArrows();
+    }
+    const locked = nextLocked(best);
+    if (locked) {
+      ctx.globalAlpha = appear * 0.75;
+      write(`${locked.name} — на ${locked.unlockAt} очках`, HUD.labelSize * 0.8, HUD.arrowY + 9, COLORS.hudDim);
+    }
   } else if (game.state === STATE.playing) {
     ctx.globalAlpha = appear;
     // Счёт подпрыгивает на каждом очке — маленькая награда за лиану.
     const pop = 1 + (game.scorePop / JUICE.scorePop) * 0.28;
     write(String(game.score.current), HUD.scoreSize, 16, COLORS.hudStrong, pop);
+  } else if (game.state === STATE.paused) {
+    ctx.globalAlpha = appear;
+    ctx.fillStyle = COLORS.deadVeil;
+    ctx.fillRect(0, 0, view.bufferWidth, view.bufferHeight);
+    write('пауза', HUD.titleSize * 0.8, 42, COLORS.hudStrong);
+    ctx.globalAlpha = appear * breathe;
+    write('тап — продолжить', HUD.hintSize, 60, COLORS.hud);
   } else {
     ctx.globalAlpha = appear;
     ctx.fillStyle = COLORS.deadVeil;
     ctx.fillRect(0, 0, view.bufferWidth, view.bufferHeight);
 
-    write('счёт', HUD.labelSize, 34, COLORS.hudDim);
-    write(String(game.score.current), HUD.scoreSize, 46, COLORS.hudStrong);
+    write('счёт', HUD.labelSize, 32, COLORS.hudDim);
+    write(String(game.score.current), HUD.scoreSize, 44, COLORS.hudStrong);
     if (game.score.beaten) {
-      write('новый рекорд!', HUD.hintSize, 61, COLORS.record, 1 + Math.sin(game.clock * 5) * 0.05);
+      write('новый рекорд!', HUD.hintSize, 58, COLORS.record, 1 + Math.sin(game.clock * 5) * 0.05);
     } else {
-      write(`рекорд ${game.score.best}`, HUD.hintSize, 61, COLORS.hud);
+      write(`рекорд ${best}`, HUD.hintSize, 58, COLORS.hud);
+    }
+
+    const unlocked = unlockedBetween(game.score.previousBest, best);
+    if (unlocked) {
+      write(`открыт скин: ${unlocked.name}!`, HUD.labelSize, 68, COLORS.record);
     }
 
     // Пока пауза после смерти не истекла, подсказка приглушена — тап всё равно
     // не сработает, и нечестно предлагать то, что не отвечает.
     ctx.globalAlpha = appear * (game.restartArmed ? breathe : 0.3);
-    write('тап — ещё раз', HUD.hintSize, 78, COLORS.hud);
+    write('тап — ещё раз', HUD.hintSize, 80, COLORS.hud);
   }
 
   ctx.globalAlpha = 1;
-  renderMuteButton();
+  renderCornerButtons();
 }
 
-/** Динамик выложен по клеткам 15x15 — векторная иконка на такой сетке размылась бы. */
-function renderMuteButton() {
-  const unit = PIXEL.perUnit;
-  muteTarget.x = VIEW.coreWidth - HUD.muteMargin - HUD.muteSize / 2;
-  muteTarget.y = HUD.muteMargin + HUD.muteSize / 2;
-  muteTarget.radius = HUD.muteSize * 0.8;
+/** Треугольник из столбиков убывающей высоты — стрелка по пиксельной сетке. */
+function pixelArrow(centerX, centerY, size, direction) {
+  const columns = Math.max(2, Math.round(size / (2 * UNIT)));
+  for (let i = 0; i < columns; i++) {
+    const height = (columns - i) * 2 * UNIT;
+    const offset = (i - (columns - 1) / 2) * UNIT * direction;
+    pixelRect(centerX + offset - UNIT / 2, centerY - height / 2, UNIT, height);
+  }
+}
 
-  const originX = (VIEW.coreWidth - HUD.muteMargin - HUD.muteSize - view.left) * unit;
-  const originY = (HUD.muteMargin - view.top) * unit;
-  const cell = (HUD.muteSize * unit) / 15;
+function renderSkinArrows() {
+  renderer.beginWorld();
+  const y = HUD.arrowY;
+  buttons.previousSkin.x = VIEW.coreWidth / 2 - HUD.arrowOffset;
+  buttons.previousSkin.y = y;
+  buttons.previousSkin.radius = HUD.arrowSize;
+  buttons.nextSkin.x = VIEW.coreWidth / 2 + HUD.arrowOffset;
+  buttons.nextSkin.y = y;
+  buttons.nextSkin.radius = HUD.arrowSize;
 
+  for (const [button, direction] of [[buttons.previousSkin, -1], [buttons.nextSkin, 1]]) {
+    ctx.fillStyle = COLORS.textOutline;
+    pixelArrow(button.x + UNIT, y + UNIT, HUD.arrowSize, direction);
+    ctx.fillStyle = COLORS.hud;
+    pixelArrow(button.x, y, HUD.arrowSize, direction);
+  }
+  renderer.beginScreen();
+}
+
+/** Кнопки в углах поля: пауза слева, звук справа. Обе выложены по клеткам. */
+function renderCornerButtons() {
+  renderer.beginWorld();
+  const half = HUD.muteSize / 2;
+
+  if (buttons.pause.active) {
+    buttons.pause.x = HUD.muteMargin + half;
+    buttons.pause.y = HUD.muteMargin + half;
+    buttons.pause.radius = HUD.muteSize * 0.8;
+    const bar = HUD.muteSize * 0.22;
+    const tall = HUD.muteSize * 0.62;
+    const left = buttons.pause.x - HUD.muteSize * 0.26;
+    const right = buttons.pause.x + HUD.muteSize * 0.04;
+    const top = buttons.pause.y - tall / 2;
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = COLORS.textOutline;
+    pixelRect(left + UNIT, top + UNIT, bar, tall);
+    pixelRect(right + UNIT, top + UNIT, bar, tall);
+    ctx.fillStyle = COLORS.hud;
+    pixelRect(left, top, bar, tall);
+    pixelRect(right, top, bar, tall);
+    ctx.globalAlpha = 1;
+  } else {
+    buttons.pause.radius = 0;
+  }
+
+  buttons.mute.x = VIEW.coreWidth - HUD.muteMargin - half;
+  buttons.mute.y = HUD.muteMargin + half;
+  buttons.mute.radius = HUD.muteSize * 0.8;
+
+  const cell = HUD.muteSize / 15;
+  const originX = VIEW.coreWidth - HUD.muteMargin - HUD.muteSize;
+  const originY = HUD.muteMargin;
   const speaker = [[2, 6, 3, 3], [5, 5, 1, 5], [6, 4, 1, 7], [7, 3, 1, 9]];
   const waves = [[9, 6, 1, 3], [11, 4, 1, 7]];
   const cross = [[9, 5], [10, 6], [11, 7], [12, 8], [12, 5], [11, 6], [10, 7], [9, 8]];
-
-  const box = (gx, gy, gw, gh, shiftX, shiftY) => {
-    ctx.fillRect(
-      Math.round(originX + (gx + shiftX) * cell),
-      Math.round(originY + (gy + shiftY) * cell),
-      Math.max(1, Math.round(gw * cell)),
-      Math.max(1, Math.round(gh * cell)),
-    );
+  const box = (gx, gy, gw, gh, shift) =>
+    pixelRect(originX + gx * cell + shift, originY + gy * cell + shift, gw * cell, gh * cell);
+  const glyph = (shift) => {
+    for (const [gx, gy, gw, gh] of speaker) box(gx, gy, gw, gh, shift);
+    if (audio.enabled) for (const [gx, gy, gw, gh] of waves) box(gx, gy, gw, gh, shift);
+    else for (const [gx, gy] of cross) box(gx, gy, 1, 1, shift);
   };
 
-  const glyph = (shiftX, shiftY) => {
-    for (const [gx, gy, gw, gh] of speaker) box(gx, gy, gw, gh, shiftX, shiftY);
-    if (audio.enabled) {
-      for (const [gx, gy, gw, gh] of waves) box(gx, gy, gw, gh, shiftX, shiftY);
-    } else {
-      for (const [gx, gy] of cross) box(gx, gy, 1, 1, shiftX, shiftY);
-    }
-  };
-
-  ctx.globalAlpha = audio.enabled ? 0.95 : 0.5;
+  ctx.globalAlpha = audio.enabled ? 0.9 : 0.45;
   ctx.fillStyle = COLORS.textOutline;
-  glyph(1, 1);
+  glyph(UNIT);
   ctx.fillStyle = COLORS.hud;
-  glyph(0, 0);
+  glyph(0);
   ctx.globalAlpha = 1;
+  renderer.beginScreen();
 }
 
 function renderStats() {
   const { fps, ups, frameMs, drift } = loop.stats;
   const lines = [
-    `fps ${fps.toFixed(0)} / кадр ${frameMs.toFixed(1)}мс`,
-    `ups ${ups.toFixed(0)} / drift ${(drift * 1000).toFixed(1)}мс`,
+    `fps ${fps.toFixed(0)} / кадр ${frameMs.toFixed(1)}мс / drift ${(drift * 1000).toFixed(1)}мс`,
     `${game.state}  счёт ${game.score.current}  рекорд ${game.score.best}`,
     `путь ${game.difficulty.distance.toFixed(0)} скор ${game.difficulty.speed.toFixed(1)}`,
-    `проход ${game.difficulty.gapHeight.toFixed(1)} скачок ${game.difficulty.maxGapShift.toFixed(1)}`,
+    `биом ${game.biome.palette.name} #${game.biome.index} смесь ${game.biome.blend.toFixed(2)}`,
+    `скин ${currentSkin().name} (${skinIndex}) открыто ${unlockedCount(game.score.best)}/${SKINS.length}`,
     `лиан ${game.obstacles.alive}/${game.obstacles.allocated} искр ${game.particles.alive}/${game.particles.allocated}`,
-    `буфер ${view.bufferWidth}x${view.bufferHeight} -> ${view.cssWidth}x${view.cssHeight}`,
+    `буфер ${view.bufferWidth}x${view.bufferHeight} ups ${ups.toFixed(0)}`,
   ];
 
   renderer.beginScreen();

@@ -134,6 +134,17 @@ export const DIFFICULTY = {
   warmthTau: 900,
 };
 
+/**
+ * Смена биомов. Мир перекрашивается целиком по мере полёта: небо, лианы, ягоды,
+ * боке. Сами палитры лежат в game/biomes.js — здесь только тайминги.
+ */
+export const WORLD = {
+  /** wu пути на один биом. На стартовой скорости это примерно 35 секунд. */
+  biomeLength: 700,
+  /** Какую долю отрезка биом держится, прежде чем начать перетекать в следующий. */
+  holdFraction: 0.6,
+};
+
 export const RULES = {
   /**
    * Секунд после смерти, пока тап не перезапускает партию. Без этой паузы
@@ -148,33 +159,17 @@ export const RULES = {
  * светлячок. Небо задано парами RGB — между холодной и закатной интерполируем
  * по прогрессу партии.
  */
+/**
+ * Палитра того, что не зависит ни от биома, ни от скина. Небо, лианы и ягоды
+ * живут в game/biomes.js, окраска героя — в game/skins.js.
+ */
 export const COLORS = {
-  skyColdTop: [44, 32, 92],
-  skyColdBottom: [120, 76, 156],
-  skyWarmTop: [104, 50, 138],
-  skyWarmBottom: [255, 158, 98],
-
-  bokeh: 'hsl(48, 100%, 86%)',
-
   coreOutline: 'hsla(38, 60%, 72%, 0.10)',
 
-  playerHalo: 'hsla(48, 100%, 66%, 0.13)',
-  playerGlow: 'hsla(48, 100%, 70%, 0.26)',
-  playerBody: 'hsl(48, 100%, 64%)',
-  playerBelly: 'hsl(40, 100%, 76%)',
-  playerOutline: 'hsl(24, 60%, 26%)',
+  playerWing: 'hsla(190, 95%, 90%, 0.5)',
   playerEye: 'hsl(0, 0%, 100%)',
   playerPupil: 'hsl(24, 60%, 18%)',
-  playerWing: 'hsla(190, 95%, 90%, 0.5)',
 
-  obstacle: 'hsl(148, 46%, 42%)',
-  obstacleLight: 'hsl(140, 50%, 55%)',
-  obstacleCap: 'hsl(96, 56%, 60%)',
-  obstacleOutline: 'hsl(158, 44%, 19%)',
-  obstacleBerry: 'hsl(44, 100%, 72%)',
-
-  sparkTrail: 'hsl(48, 100%, 78%)',
-  sparkFlap: 'hsl(52, 100%, 88%)',
   sparkNearMiss: 'hsl(28, 100%, 74%)',
   sparkDeath: 'hsl(20, 95%, 70%)',
 
@@ -191,8 +186,9 @@ export const COLORS = {
 
 /** Пресеты частиц. Ссылки на статические объекты — вызов emit ничего не аллоцирует. */
 export const SPARKS = {
-  trail: { speed: 2.2, life: 0.6, size: 1.5, gravity: -4, drag: 2.2, spawnRadius: 0.6, color: COLORS.sparkTrail },
-  flap: { speed: 16, life: 0.45, size: 1.05, gravity: 14, drag: 3.0, spawnRadius: 1.4, color: COLORS.sparkFlap },
+  // Цвет шлейфа и искр взмаха переопределяется цветом выбранного скина.
+  trail: { speed: 2.2, life: 0.6, size: 1.5, gravity: -4, drag: 2.2, spawnRadius: 0.6, color: '#fff' },
+  flap: { speed: 16, life: 0.45, size: 1.05, gravity: 14, drag: 3.0, spawnRadius: 1.4, color: '#fff' },
   nearMiss: { speed: 14, life: 0.5, size: 1.0, gravity: 4, drag: 3.0, spawnRadius: 1.8, color: COLORS.sparkNearMiss },
   death: { speed: 32, life: 1.0, size: 1.4, gravity: 36, drag: 1.2, spawnRadius: 0.9, color: COLORS.sparkDeath },
 };
@@ -258,9 +254,13 @@ export const HUD = {
   textOutline: 0.2,
   /** сек: плавное появление экранов, чтобы переходы не дёргались. */
   fadeIn: 0.32,
-  /** Кнопка звука: размер и отступ от угла поля, в wu. */
+  /** Кнопки в углах поля: размер и отступ, в wu. Пауза слева, звук справа. */
   muteSize: 5.0,
   muteMargin: 3.6,
+  /** Стрелки выбора скина на стартовом экране. */
+  arrowSize: 5.0,
+  arrowOffset: 17,
+  arrowY: 80,
 };
 
 export const SOUND = {

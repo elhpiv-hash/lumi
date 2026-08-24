@@ -2,6 +2,7 @@ import { PLAYER, OBSTACLES, RULES, JUICE, SPARKS } from '../config.js';
 import { createPlayer } from './player.js';
 import { createObstacles } from './obstacles.js';
 import { createDifficulty } from './difficulty.js';
+import { createBiome } from './biomes.js';
 import { createScore } from './score.js';
 import { createParticles } from '../engine/particles.js';
 import { hitsFloor, hitsObstacles, gapClearance } from './collision.js';
@@ -9,6 +10,7 @@ import { hitsFloor, hitsObstacles, gapClearance } from './collision.js';
 export const STATE = {
   ready: 'ready',
   playing: 'playing',
+  paused: 'paused',
   dead: 'dead',
 };
 
@@ -30,6 +32,7 @@ export function createGame(audio) {
   const player = createPlayer();
   const obstacles = createObstacles();
   const difficulty = createDifficulty();
+  const biome = createBiome();
   const particles = createParticles();
   const score = createScore();
 
@@ -84,10 +87,21 @@ export function createGame(audio) {
     score.commit();
   }
 
+  function pause() {
+    if (state !== STATE.playing) return;
+    enter(STATE.paused);
+  }
+
+  function resume() {
+    if (state !== STATE.paused) return;
+    enter(STATE.playing);
+  }
+
   function restart() {
     player.reset();
     obstacles.reset();
     difficulty.reset();
+    biome.reset();
     particles.reset();
     score.reset();
     shakeTime = 0;
@@ -143,6 +157,7 @@ export function createGame(audio) {
         // расстояние в сложности и сдвиг колонн были одним и тем же числом.
         const travelled = difficulty.advance(dt);
         obstacles.update(travelled, difficulty.gapHeight, difficulty.maxGapShift);
+        biome.update(difficulty.distance);
         emitTrail(dt, -difficulty.speed);
         countPassed();
         countNearMiss();
@@ -150,6 +165,14 @@ export function createGame(audio) {
       },
       flap() {
         doFlap();
+      },
+    },
+
+    [STATE.paused]: {
+      // Мир замер целиком: ни физики, ни частиц, ни трепета крыльев.
+      update() {},
+      flap() {
+        resume();
       },
     },
 
@@ -168,6 +191,7 @@ export function createGame(audio) {
     player,
     obstacles,
     difficulty,
+    biome,
     particles,
     score,
 
@@ -182,12 +206,19 @@ export function createGame(audio) {
     /** Готов ли экран смерти принять тап — чтобы не звать в пустоту. */
     get restartArmed() { return deadTime >= RULES.restartLock; },
 
+    pause,
+    resume,
+
     update(dt) {
       behaviour[state].update(dt);
-      // Частицы живут во всех состояниях: искры смерти должны догореть,
+      // Время экрана идёт всегда: на паузе по нему проявляется её собственный
+      // экран. Всё остальное на паузе стоит.
+      stateTime += dt;
+      if (state === STATE.paused) return;
+
+      // Частицы живут во всех прочих состояниях: искры смерти должны догореть,
       // а шлейф — рассеяться.
       particles.update(dt);
-      stateTime += dt;
       clock += dt;
       if (shakeTime > 0) shakeTime = Math.max(0, shakeTime - dt);
       if (nearMissTime > 0) nearMissTime = Math.max(0, nearMissTime - dt);

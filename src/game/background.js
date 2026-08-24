@@ -4,7 +4,7 @@ import { VIEW, PIXEL, BACKGROUND, COLORS } from '../config.js';
 const UNIT = 1 / PIXEL.perUnit;
 
 /**
- * Фон: небо, которое теплеет с прогрессом, два слоя далёкого боке и рама,
+ * Фон: небо текущего биома, два слоя далёкого боке и рама,
  * закрывающая всё за пределами игрового поля.
  *
  * Это единственный игровой модуль, который принимает ctx: рисование градиента
@@ -30,7 +30,8 @@ export function createBackground() {
   }
 
   let sky = null;
-  let skyWarmth = -1;
+  let skyTopColor = -1;
+  let skyBottomColor = -1;
   let skyTop = NaN;
   let skyBottom = NaN;
 
@@ -40,20 +41,20 @@ export function createBackground() {
   let frameTop = NaN;
   let frameBottom = NaN;
 
-  function mixColor(cold, warm, t) {
-    const r = Math.round(cold[0] + (warm[0] - cold[0]) * t);
-    const g = Math.round(cold[1] + (warm[1] - cold[1]) * t);
-    const b = Math.round(cold[2] + (warm[2] - cold[2]) * t);
-    return `rgb(${r}, ${g}, ${b})`;
+  /** Пакуем тройку в одно число — так кэш сравнивается без склейки строк. */
+  function pack(rgb) {
+    return (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
   }
 
-  function renderSky(ctx, view, warmth) {
-    const quantized = Math.round(warmth * 96) / 96;
-    if (!sky || quantized !== skyWarmth || view.top !== skyTop || view.bottom !== skyBottom) {
+  function renderSky(ctx, view, palette) {
+    const top = pack(palette.skyTop);
+    const bottom = pack(palette.skyBottom);
+    if (!sky || top !== skyTopColor || bottom !== skyBottomColor || view.top !== skyTop || view.bottom !== skyBottom) {
       sky = ctx.createLinearGradient(0, view.top, 0, view.bottom);
-      sky.addColorStop(0, mixColor(COLORS.skyColdTop, COLORS.skyWarmTop, quantized));
-      sky.addColorStop(1, mixColor(COLORS.skyColdBottom, COLORS.skyWarmBottom, quantized));
-      skyWarmth = quantized;
+      sky.addColorStop(0, `rgb(${palette.skyTop[0]}, ${palette.skyTop[1]}, ${palette.skyTop[2]})`);
+      sky.addColorStop(1, `rgb(${palette.skyBottom[0]}, ${palette.skyBottom[1]}, ${palette.skyBottom[2]})`);
+      skyTopColor = top;
+      skyBottomColor = bottom;
       skyTop = view.top;
       skyBottom = view.bottom;
     }
@@ -61,9 +62,9 @@ export function createBackground() {
     ctx.fillRect(view.left, view.top, view.width, view.height);
   }
 
-  function renderStars(ctx, view, distance) {
+  function renderStars(ctx, view, distance, palette) {
     const span = BACKGROUND.wrapWidth;
-    ctx.fillStyle = COLORS.bokeh;
+    ctx.fillStyle = palette.bokeh;
 
     for (const layer of layers) {
       const { spec, xs, heights } = layer;

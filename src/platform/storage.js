@@ -11,16 +11,18 @@
  * к localStorage может быть закрыт политикой сторонних кук. Тогда рекорд просто
  * не переживёт перезагрузку, но в пределах сессии продолжит работать.
  */
-const KEY = 'lumi.best';
+const BEST_KEY = 'lumi.best';
+const SKIN_KEY = 'lumi.skin';
 
 let cached = null;
+let cachedSkin = null;
 
 export function getBest() {
   if (cached !== null) return cached;
 
   let stored = 0;
   try {
-    const value = Number(localStorage.getItem(KEY));
+    const value = Number(localStorage.getItem(BEST_KEY));
     if (Number.isFinite(value) && value > 0) stored = Math.floor(value);
   } catch {
     stored = 0;
@@ -33,8 +35,37 @@ export function getBest() {
 export function setBest(value) {
   cached = value;
   try {
-    localStorage.setItem(KEY, String(value));
+    localStorage.setItem(BEST_KEY, String(value));
   } catch {
     // Записать не вышло — рекорд останется только на эту сессию.
+  }
+}
+
+/**
+ * Выбранный скин. Хранится один индекс: список открытого выводится из рекорда,
+ * поэтому отдельного счётчика разблокировок не нужно и рассинхронизироваться
+ * им не с чем.
+ */
+export function getSkinIndex() {
+  if (cachedSkin !== null) return cachedSkin;
+
+  let stored = 0;
+  try {
+    const value = Number(localStorage.getItem(SKIN_KEY));
+    if (Number.isFinite(value) && value >= 0) stored = Math.floor(value);
+  } catch {
+    stored = 0;
+  }
+
+  cachedSkin = stored;
+  return cachedSkin;
+}
+
+export function setSkinIndex(value) {
+  cachedSkin = value;
+  try {
+    localStorage.setItem(SKIN_KEY, String(value));
+  } catch {
+    // Записать не вышло — выбор останется только на эту сессию.
   }
 }

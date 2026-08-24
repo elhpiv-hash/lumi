@@ -10,11 +10,14 @@ import { getBest, setBest } from '../platform/storage.js';
 export function createScore() {
   let current = 0;
   let best = getBest();
+  let previousBest = best;
   let beaten = false;
 
   return {
     get current() { return current; },
     get best() { return best; },
+    /** Рекорд на момент начала партии — по нему видно, что открылось именно сейчас. */
+    get previousBest() { return previousBest; },
     /** Побит ли рекорд именно в этой партии — для надписи на экране смерти. */
     get beaten() { return beaten; },
 
@@ -33,6 +36,7 @@ export function createScore() {
 
     reset() {
       current = 0;
+      previousBest = best;
       beaten = false;
     },
   };

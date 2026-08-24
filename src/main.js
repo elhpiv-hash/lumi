@@ -33,6 +33,7 @@ const background = createBackground();
 const buttons = {
   mute: { x: 0, y: 0, radius: 0, active: true },
   pause: { x: 0, y: 0, radius: 0, active: false },
+  home: { x: 0, y: 0, radius: 0, active: false },
   previousSkin: { x: 0, y: 0, radius: 0, active: false },
   nextSkin: { x: 0, y: 0, radius: 0, active: false },
   buySkin: { x: 0, y: 0, radius: 0, active: false },
@@ -129,6 +130,7 @@ function pressButton(cssX, cssY) {
 
     if (name === 'mute') audio.toggle();
     else if (name === 'pause') game.pause();
+    else if (name === 'home') game.toMenu();
     else if (name === 'previousSkin') cycleSkin(-1);
     else if (name === 'nextSkin') cycleSkin(1);
     else if (name === 'buySkin') buyBrowsedSkin();
@@ -461,6 +463,9 @@ function renderHud() {
   const wallet = game.wallet;
 
   buttons.pause.active = game.state === STATE.playing;
+  // Из паузы и с экрана смерти нужен путь назад в меню — иначе за скином
+  // не вернуться иначе как перезагрузкой страницы.
+  buttons.home.active = game.state === STATE.paused || game.state === STATE.dead;
   buttons.previousSkin.active = false;
   buttons.nextSkin.active = false;
   buttons.buySkin.active = false;
@@ -505,9 +510,11 @@ function renderHud() {
     ctx.globalAlpha = appear;
     ctx.fillStyle = COLORS.deadVeil;
     ctx.fillRect(0, 0, view.bufferWidth, view.bufferHeight);
-    write('пауза', HUD.titleSize * 0.8, 42, COLORS.hudStrong);
+    write('пауза', HUD.titleSize * 0.8, 40, COLORS.hudStrong);
     ctx.globalAlpha = appear * breathe;
-    write('тап — продолжить', HUD.hintSize, 60, COLORS.hud);
+    write('тап — продолжить', HUD.hintSize, 58, COLORS.hud);
+    ctx.globalAlpha = appear * 0.7;
+    write('домик слева — в меню', HUD.labelSize * 0.85, 70, COLORS.hudDim);
   } else {
     ctx.globalAlpha = appear;
     ctx.fillStyle = COLORS.deadVeil;
@@ -527,7 +534,9 @@ function renderHud() {
     // Пока пауза после смерти не истекла, подсказка приглушена — тап всё равно
     // не сработает, и нечестно предлагать то, что не отвечает.
     ctx.globalAlpha = appear * (game.restartArmed ? breathe : 0.3);
-    write('тап — ещё раз', HUD.hintSize, 80, COLORS.hud);
+    write('тап — ещё раз', HUD.hintSize, 78, COLORS.hud);
+    ctx.globalAlpha = appear * 0.7;
+    write('домик слева — в меню', HUD.labelSize * 0.85, 88, COLORS.hudDim);
   }
 
   ctx.globalAlpha = 1;
@@ -563,10 +572,42 @@ function renderSkinArrows() {
   renderer.beginScreen();
 }
 
-/** Кнопки в углах поля: пауза слева, звук справа. Обе выложены по клеткам. */
+/** Домик выложен по тем же клеткам 15x15, что и динамик. */
+function drawHouse(originX, originY) {
+  const cell = HUD.muteSize / 15;
+  const roof = [[7, 3, 1, 1], [6, 4, 3, 1], [5, 5, 5, 1], [4, 6, 7, 1]];
+  const walls = [[5, 7, 5, 5]];
+  const box = (gx, gy, gw, gh, shift) =>
+    pixelRect(originX + gx * cell + shift, originY + gy * cell + shift, gw * cell, gh * cell);
+  const glyph = (shift) => {
+    for (const [gx, gy, gw, gh] of roof) box(gx, gy, gw, gh, shift);
+    for (const [gx, gy, gw, gh] of walls) box(gx, gy, gw, gh, shift);
+  };
+
+  ctx.globalAlpha = 0.9;
+  ctx.fillStyle = COLORS.textOutline;
+  glyph(UNIT);
+  ctx.fillStyle = COLORS.hud;
+  glyph(0);
+  // Дверь вырезаем цветом обводки — так домик читается даже в 15 пикселей.
+  ctx.fillStyle = COLORS.textOutline;
+  box(7, 9, 2, 3, 0);
+  ctx.globalAlpha = 1;
+}
+
+/** Кнопки в углах поля: пауза или домик слева, звук справа. Все по клеткам. */
 function renderCornerButtons() {
   renderer.beginWorld();
   const half = HUD.muteSize / 2;
+
+  if (buttons.home.active) {
+    buttons.home.x = HUD.muteMargin + half;
+    buttons.home.y = HUD.muteMargin + half;
+    buttons.home.radius = HUD.muteSize * 0.8;
+    drawHouse(HUD.muteMargin, HUD.muteMargin);
+  } else {
+    buttons.home.radius = 0;
+  }
 
   if (buttons.pause.active) {
     buttons.pause.x = HUD.muteMargin + half;

@@ -102,7 +102,21 @@ export function createGame(audio) {
     enter(STATE.playing);
   }
 
-  function restart() {
+  /**
+   * Выход в меню с паузы или с экрана смерти. Партия при этом засчитывается:
+   * со смерти рекорд и монеты уже записаны, а с паузы игрок реально пролетел
+   * это расстояние — отбирать заработанное за то, что он вышел, нечестно.
+   * Обе записи идемпотентны, поэтому повторный вызов безопасен.
+   */
+  function toMenu() {
+    if (state !== STATE.paused && state !== STATE.dead) return;
+    score.commit();
+    wallet.commit();
+    resetWorld();
+    enter(STATE.ready);
+  }
+
+  function resetWorld() {
     player.reset();
     obstacles.reset();
     difficulty.reset();
@@ -115,6 +129,10 @@ export function createGame(audio) {
     nearMissTime = 0;
     scorePop = 0;
     trailAccumulator = 0;
+  }
+
+  function restart() {
+    resetWorld();
     start();
   }
 
@@ -239,6 +257,7 @@ export function createGame(audio) {
 
     pause,
     resume,
+    toMenu,
 
     update(dt) {
       behaviour[state].update(dt);

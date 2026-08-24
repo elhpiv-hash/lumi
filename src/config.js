@@ -98,6 +98,31 @@ export const OBSTACLES = {
 };
 
 /**
+ * Монеты. Появляются между лианами и уезжают вместе с миром.
+ *
+ * Смысл смещения по вертикали в том, что без монет оптимальная траектория
+ * всегда проходит по центру прохода — играть ровно, но плоско. За монетой
+ * приходится нырять, и появляется выбор: рискнуть или пролететь мимо.
+ */
+export const COINS = {
+  /** wu: радиус монеты. */
+  radius: 1.9,
+  /** Доля лиан, за которыми выкладывается монета. */
+  chance: 0.75,
+  /** wu: насколько монета уезжает от центра прохода. */
+  offset: 7,
+  /** Сколько даёт одна монета. */
+  value: 1,
+  /** Скорость вращения, рад/сек — монета крутится, сплющиваясь по горизонтали. */
+  spinRate: 4.5,
+  /**
+   * Ёмкость пула. Монета живёт от спавна за правым краем поля до выезда
+   * за левый, это чуть больше двух интервалов — трёх штук хватает, остальное запас.
+   */
+  poolSize: 8,
+};
+
+/**
  * Нарастание сложности. Считается от пройденного миром пути в wu — метрика
  * объективная и непрерывная, поэтому скорость растёт плавно, а не ступенями
  * на каждом очке.
@@ -170,6 +195,10 @@ export const COLORS = {
   playerEye: 'hsl(0, 0%, 100%)',
   playerPupil: 'hsl(24, 60%, 18%)',
 
+  coin: 'hsl(46, 100%, 62%)',
+  coinLight: 'hsl(52, 100%, 82%)',
+  coinOutline: 'hsl(30, 70%, 30%)',
+
   sparkNearMiss: 'hsl(28, 100%, 74%)',
   sparkDeath: 'hsl(20, 95%, 70%)',
 
@@ -190,6 +219,7 @@ export const SPARKS = {
   trail: { speed: 2.2, life: 0.6, size: 1.5, gravity: -4, drag: 2.2, spawnRadius: 0.6, color: '#fff' },
   flap: { speed: 16, life: 0.45, size: 1.05, gravity: 14, drag: 3.0, spawnRadius: 1.4, color: '#fff' },
   nearMiss: { speed: 14, life: 0.5, size: 1.0, gravity: 4, drag: 3.0, spawnRadius: 1.8, color: COLORS.sparkNearMiss },
+  coin: { speed: 13, life: 0.4, size: 0.95, gravity: -6, drag: 3.2, spawnRadius: 1.2, color: COLORS.coinLight },
   death: { speed: 32, life: 1.0, size: 1.4, gravity: 36, drag: 1.2, spawnRadius: 0.9, color: COLORS.sparkDeath },
 };
 
@@ -208,6 +238,7 @@ export const JUICE = {
   flapSparks: 9,
   deathSparks: 30,
   nearMissSparks: 7,
+  coinSparks: 8,
 
   /** Наклон и вытягивание светлячка по вертикальной скорости — только в render. */
   maxTilt: 0.46,
@@ -272,6 +303,7 @@ export const SOUND = {
     score: { type: 'triangle', from: 940, to: 1400, duration: 0.12, gain: 0.4 },
     nearMiss: { type: 'sine', from: 1600, to: 2200, duration: 0.07, gain: 0.24 },
     death: { type: 'triangle', from: 380, to: 90, duration: 0.5, gain: 0.5 },
+    coin: { type: 'triangle', from: 1180, to: 1760, duration: 0.1, gain: 0.34 },
   },
 };
 

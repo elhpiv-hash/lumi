@@ -1,11 +1,13 @@
-import { PLAYER, OBSTACLES, RULES, JUICE, SPARKS } from '../config.js';
+import { PLAYER, OBSTACLES, COINS, RULES, JUICE, SPARKS } from '../config.js';
 import { createPlayer } from './player.js';
 import { createObstacles } from './obstacles.js';
 import { createDifficulty } from './difficulty.js';
 import { createBiome } from './biomes.js';
+import { createCoins } from './coins.js';
+import { createWallet } from './wallet.js';
 import { createScore } from './score.js';
 import { createParticles } from '../engine/particles.js';
-import { hitsFloor, hitsObstacles, gapClearance } from './collision.js';
+import { hitsFloor, hitsObstacles, gapClearance, touchesCoin } from './collision.js';
 
 export const STATE = {
   ready: 'ready',
@@ -33,6 +35,8 @@ export function createGame(audio) {
   const obstacles = createObstacles();
   const difficulty = createDifficulty();
   const biome = createBiome();
+  const coins = createCoins();
+  const wallet = createWallet();
   const particles = createParticles();
   const score = createScore();
 
@@ -85,6 +89,7 @@ export function createGame(audio) {
     );
     audio.play('death');
     score.commit();
+    wallet.commit();
   }
 
   function pause() {
@@ -102,6 +107,8 @@ export function createGame(audio) {
     obstacles.reset();
     difficulty.reset();
     biome.reset();
+    coins.reset();
+    wallet.resetRun();
     particles.reset();
     score.reset();
     shakeTime = 0;
@@ -120,6 +127,19 @@ export function createGame(audio) {
         scorePop = JUICE.scorePop;
         audio.play('score');
       }
+    }
+  }
+
+  function collectCoins() {
+    for (let i = coins.list.length - 1; i >= 0; i--) {
+      if (!touchesCoin(player.state, coins.list[i])) continue;
+      coins.collect(i);
+      wallet.add(COINS.value);
+      particles.emit(
+        player.state.x, player.state.y,
+        JUICE.coinSparks, SPARKS.coin, -difficulty.speed, 0,
+      );
+      audio.play('coin');
     }
   }
 
@@ -158,6 +178,15 @@ export function createGame(audio) {
         const travelled = difficulty.advance(dt);
         obstacles.update(travelled, difficulty.gapHeight, difficulty.maxGapShift);
         biome.update(difficulty.distance);
+        // Только что заспавненную лиану видно по равенству previousX и x:
+        // движение их разводит, значит совпасть они могут лишь в шаге рождения.
+        for (const obstacle of obstacles.list) {
+          if (obstacle.previousX === obstacle.x) {
+            coins.spawn(obstacle.x, obstacle.gapCenter, obstacle.gapHeight);
+          }
+        }
+        coins.update(travelled);
+        collectCoins();
         emitTrail(dt, -difficulty.speed);
         countPassed();
         countNearMiss();
@@ -192,6 +221,8 @@ export function createGame(audio) {
     obstacles,
     difficulty,
     biome,
+    coins,
+    wallet,
     particles,
     score,
 

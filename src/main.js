@@ -1,11 +1,11 @@
-import { LOOP, VIEW, PIXEL, PLAYER, FACE, OBSTACLES, SPARKS, JUICE, HUD, COLORS, DEBUG } from './config.js';
+import { LOOP, VIEW, PIXEL, PLAYER, FACE, OBSTACLES, COINS, SPARKS, JUICE, HUD, COLORS, DEBUG } from './config.js';
 import { createRenderer } from './engine/canvas.js';
 import { createLoop } from './engine/loop.js';
 import { createInput } from './engine/input.js';
 import { createAudio } from './engine/audio.js';
 import { createGame, STATE } from './game/states.js';
 import { createBackground } from './game/background.js';
-import { SKINS, isUnlocked, nextLocked, stepSkin, unlockedBetween, unlockedCount } from './game/skins.js';
+import { SKINS, stepSkin } from './game/skins.js';
 import { getSkinIndex, setSkinIndex } from './platform/storage.js';
 
 /**
@@ -35,9 +35,12 @@ const buttons = {
   pause: { x: 0, y: 0, radius: 0, active: false },
   previousSkin: { x: 0, y: 0, radius: 0, active: false },
   nextSkin: { x: 0, y: 0, radius: 0, active: false },
+  buySkin: { x: 0, y: 0, radius: 0, active: false },
 };
 
+/** Надетый скин — и отдельно курсор магазина: листать можно и то, что не куплено. */
 let skinIndex = getSkinIndex();
+let browseIndex = skinIndex;
 
 function currentSkin() {
   return SKINS[Math.min(Math.max(skinIndex, 0), SKINS.length - 1)];
@@ -54,18 +57,33 @@ function applySkin() {
   SPARKS.flap.color = skin.belly;
 }
 
-// Рекорд мог обнулиться вместе с хранилищем — тогда выбранный скин окажется
-// заблокированным, и надо честно откатиться на стартовый.
-if (!isUnlocked(currentSkin(), game.score.best)) skinIndex = 0;
+// Хранилище могло обнулиться — тогда надетый скин окажется неоплаченным,
+// и надо честно откатиться на бесплатный.
+if (!game.wallet.isOwned(skinIndex)) {
+  skinIndex = 0;
+  browseIndex = 0;
+}
 applySkin();
 
-function cycleSkin(direction) {
-  const next = stepSkin(skinIndex, direction, game.score.best);
-  if (next === skinIndex) return;
-  skinIndex = next;
-  setSkinIndex(skinIndex);
+function wear(index) {
+  skinIndex = index;
+  setSkinIndex(index);
   applySkin();
+}
+
+function cycleSkin(direction) {
+  browseIndex = stepSkin(browseIndex, direction);
+  // Купленное надеваем сразу; некупленное только показываем в витрине,
+  // светлячок продолжает летать в оплаченном.
+  if (game.wallet.isOwned(browseIndex)) wear(browseIndex);
   audio.play('score');
+}
+
+function buyBrowsedSkin() {
+  const skin = SKINS[browseIndex];
+  if (!game.wallet.buy(browseIndex, skin.price)) return;
+  wear(browseIndex);
+  audio.play('coin');
 }
 
 // Взмах не применяем прямо в обработчике события: команда легла бы в физику
@@ -113,6 +131,7 @@ function pressButton(cssX, cssY) {
     else if (name === 'pause') game.pause();
     else if (name === 'previousSkin') cycleSkin(-1);
     else if (name === 'nextSkin') cycleSkin(1);
+    else if (name === 'buySkin') buyBrowsedSkin();
     return true;
   }
   return false;
@@ -207,6 +226,7 @@ function render(alpha) {
   ctx.save();
   applyShake();
   renderObstacles(alpha, palette);
+  renderCoins(alpha);
   renderParticles(alpha);
   renderPlayer(alpha);
   ctx.restore();
@@ -283,6 +303,25 @@ function drawVine(x, y, height, capOnTop, palette) {
   ctx.fillStyle = palette.berry;
   for (let i = 0; i < 3; i++) {
     pixelCircle(x + columnWidth * (0.2 + i * 0.3), capY + capHeight * 0.5, capHeight * 0.2);
+  }
+}
+
+/**
+ * Монеты крутятся: горизонтальный радиус ходит по косинусу, вертикальный стоит.
+ * Поворота нет — он увёл бы фигуру с пиксельной сетки, а сплющивание не уводит.
+ */
+function renderCoins(alpha) {
+  for (const coin of game.coins.list) {
+    const x = snap(lerp(coin.previousX, coin.x, alpha));
+    const spin = Math.abs(Math.cos(game.clock * COINS.spinRate + coin.phase));
+    const radiusX = Math.max(UNIT, COINS.radius * (0.22 + 0.78 * spin));
+
+    ctx.fillStyle = COLORS.coinOutline;
+    pixelEllipse(x, coin.y, radiusX + UNIT, COINS.radius + UNIT);
+    ctx.fillStyle = COLORS.coin;
+    pixelEllipse(x, coin.y, radiusX, COINS.radius);
+    ctx.fillStyle = COLORS.coinLight;
+    pixelEllipse(x, coin.y - COINS.radius * 0.25, radiusX * 0.45, COINS.radius * 0.35);
   }
 }
 
@@ -419,35 +458,49 @@ function renderHud() {
   const raw = Math.min(1, game.stateTime / HUD.fadeIn);
   const appear = raw * raw * (3 - 2 * raw);
   const breathe = 0.62 + 0.38 * Math.sin(game.stateTime * 2.6);
-  const best = game.score.best;
+  const wallet = game.wallet;
 
   buttons.pause.active = game.state === STATE.playing;
   buttons.previousSkin.active = false;
   buttons.nextSkin.active = false;
+  buttons.buySkin.active = false;
 
   if (game.state === STATE.ready) {
-    ctx.globalAlpha = appear;
-    write('LUMI', HUD.titleSize, 26, COLORS.hudStrong, 1 + Math.sin(game.clock * 1.6) * 0.03);
-    ctx.globalAlpha = appear * breathe;
-    write('тап, чтобы лететь', HUD.hintSize, 60, COLORS.hud);
+    const skin = SKINS[browseIndex];
+    const owned = wallet.isOwned(browseIndex);
 
     ctx.globalAlpha = appear;
-    write(currentSkin().name, HUD.labelSize, HUD.arrowY, COLORS.hudStrong);
-    if (unlockedCount(best) > 1) {
-      buttons.previousSkin.active = true;
-      buttons.nextSkin.active = true;
-      renderSkinArrows();
-    }
-    const locked = nextLocked(best);
-    if (locked) {
-      ctx.globalAlpha = appear * 0.75;
-      write(`${locked.name} — на ${locked.unlockAt} очках`, HUD.labelSize * 0.8, HUD.arrowY + 9, COLORS.hudDim);
+    write(`● ${wallet.total}`, HUD.labelSize, 13, COLORS.coin);
+    write('LUMI', HUD.titleSize, 31, COLORS.hudStrong, 1 + Math.sin(game.clock * 1.6) * 0.03);
+    ctx.globalAlpha = appear * breathe;
+    write('тап, чтобы лететь', HUD.hintSize, 58, COLORS.hud);
+
+    ctx.globalAlpha = appear;
+    write(skin.name, HUD.labelSize, HUD.arrowY, owned ? COLORS.hudStrong : COLORS.hudDim);
+    buttons.previousSkin.active = true;
+    buttons.nextSkin.active = true;
+    renderSkinArrows();
+
+    if (owned) {
+      // Купленное надевается сразу при листании, поэтому вариант тут ровно один.
+      write('надет', HUD.labelSize * 0.8, HUD.arrowY + 9, COLORS.hudDim);
+    } else {
+      const affordable = wallet.total >= skin.price;
+      buttons.buySkin.active = affordable;
+      buttons.buySkin.x = VIEW.coreWidth / 2;
+      buttons.buySkin.y = HUD.arrowY + 9;
+      buttons.buySkin.radius = 8;
+      ctx.globalAlpha = appear * (affordable ? 1 : 0.5);
+      write(`● ${skin.price} — купить`, HUD.labelSize * 0.85, HUD.arrowY + 9,
+        affordable ? COLORS.coin : COLORS.hudDim);
     }
   } else if (game.state === STATE.playing) {
     ctx.globalAlpha = appear;
     // Счёт подпрыгивает на каждом очке — маленькая награда за лиану.
     const pop = 1 + (game.scorePop / JUICE.scorePop) * 0.28;
     write(String(game.score.current), HUD.scoreSize, 16, COLORS.hudStrong, pop);
+    ctx.globalAlpha = appear * 0.9;
+    write(`● ${wallet.total}`, HUD.labelSize * 0.9, 28, COLORS.coin);
   } else if (game.state === STATE.paused) {
     ctx.globalAlpha = appear;
     ctx.fillStyle = COLORS.deadVeil;
@@ -460,17 +513,15 @@ function renderHud() {
     ctx.fillStyle = COLORS.deadVeil;
     ctx.fillRect(0, 0, view.bufferWidth, view.bufferHeight);
 
-    write('счёт', HUD.labelSize, 32, COLORS.hudDim);
-    write(String(game.score.current), HUD.scoreSize, 44, COLORS.hudStrong);
+    write('счёт', HUD.labelSize, 30, COLORS.hudDim);
+    write(String(game.score.current), HUD.scoreSize, 42, COLORS.hudStrong);
     if (game.score.beaten) {
-      write('новый рекорд!', HUD.hintSize, 58, COLORS.record, 1 + Math.sin(game.clock * 5) * 0.05);
+      write('новый рекорд!', HUD.hintSize, 56, COLORS.record, 1 + Math.sin(game.clock * 5) * 0.05);
     } else {
-      write(`рекорд ${best}`, HUD.hintSize, 58, COLORS.hud);
+      write(`рекорд ${game.score.best}`, HUD.hintSize, 56, COLORS.hud);
     }
-
-    const unlocked = unlockedBetween(game.score.previousBest, best);
-    if (unlocked) {
-      write(`открыт скин: ${unlocked.name}!`, HUD.labelSize, 68, COLORS.record);
+    if (wallet.earned > 0) {
+      write(`● +${wallet.earned}`, HUD.labelSize, 67, COLORS.coin);
     }
 
     // Пока пауза после смерти не истекла, подсказка приглушена — тап всё равно
@@ -572,7 +623,8 @@ function renderStats() {
     `${game.state}  счёт ${game.score.current}  рекорд ${game.score.best}`,
     `путь ${game.difficulty.distance.toFixed(0)} скор ${game.difficulty.speed.toFixed(1)}`,
     `биом ${game.biome.palette.name} #${game.biome.index} смесь ${game.biome.blend.toFixed(2)}`,
-    `скин ${currentSkin().name} (${skinIndex}) открыто ${unlockedCount(game.score.best)}/${SKINS.length}`,
+    `скин ${currentSkin().name} витрина ${SKINS[browseIndex].name} куплено ${game.wallet.ownedCount}/${SKINS.length}`,
+    `монет ${game.wallet.total} (+${game.wallet.earned}) на поле ${game.coins.alive}/${game.coins.allocated}`,
     `лиан ${game.obstacles.alive}/${game.obstacles.allocated} искр ${game.particles.alive}/${game.particles.allocated}`,
     `буфер ${view.bufferWidth}x${view.bufferHeight} ups ${ups.toFixed(0)}`,
   ];

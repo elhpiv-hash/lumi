@@ -1,4 +1,4 @@
-import { VIEW, PLAYER, OBSTACLES } from '../config.js';
+import { VIEW, PLAYER, OBSTACLES, COINS } from '../config.js';
 
 /**
  * Столкновения. Модуль чистый: получает состояние игрока и список препятствий,
@@ -74,4 +74,12 @@ export function gapClearance(player, obstacle) {
   const aboveGapEdge = player.y - PLAYER.radius - (obstacle.gapCenter - half);
   const belowGapEdge = (obstacle.gapCenter + half) - (player.y + PLAYER.radius);
   return Math.min(aboveGapEdge, belowGapEdge);
+}
+
+/** Круг против круга — для монет достаточно расстояния между центрами. */
+export function touchesCoin(player, coin) {
+  const dx = player.x - coin.x;
+  const dy = player.y - coin.y;
+  const reach = PLAYER.radius + COINS.radius;
+  return dx * dx + dy * dy < reach * reach;
 }

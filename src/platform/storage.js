@@ -13,9 +13,13 @@
  */
 const BEST_KEY = 'lumi.best';
 const SKIN_KEY = 'lumi.skin';
+const COINS_KEY = 'lumi.coins';
+const OWNED_KEY = 'lumi.owned';
 
 let cached = null;
 let cachedSkin = null;
+let cachedCoins = null;
+let cachedOwned = null;
 
 export function getBest() {
   if (cached !== null) return cached;
@@ -68,4 +72,44 @@ export function setSkinIndex(value) {
   } catch {
     // Записать не вышло — выбор останется только на эту сессию.
   }
+}
+
+/** Целое неотрицательное из хранилища, или 0. Общий разбор для кошелька и маски. */
+function readNumber(key) {
+  try {
+    const value = Number(localStorage.getItem(key));
+    if (Number.isFinite(value) && value > 0) return Math.floor(value);
+  } catch {
+    return 0;
+  }
+  return 0;
+}
+
+function writeNumber(key, value) {
+  try {
+    localStorage.setItem(key, String(value));
+  } catch {
+    // Записать не вышло — прогресс останется только на эту сессию.
+  }
+}
+
+export function getCoins() {
+  if (cachedCoins === null) cachedCoins = readNumber(COINS_KEY);
+  return cachedCoins;
+}
+
+export function setCoins(value) {
+  cachedCoins = value;
+  writeNumber(COINS_KEY, value);
+}
+
+/** Купленные скины — битовая маска в одном числе. */
+export function getOwnedSkins() {
+  if (cachedOwned === null) cachedOwned = readNumber(OWNED_KEY);
+  return cachedOwned;
+}
+
+export function setOwnedSkins(value) {
+  cachedOwned = value;
+  writeNumber(OWNED_KEY, value);
 }

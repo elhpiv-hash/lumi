@@ -1,4 +1,4 @@
-import { LOOP, VIEW, PIXEL, PLAYER, FACE, OBSTACLES, COINS, SPARKS, JUICE, HUD, COLORS, DEBUG } from './config.js';
+import { LOOP, VIEW, PIXEL, PLAYER, FACE, OBSTACLES, COINS, SPARKS, JUICE, HUD, ADS, COLORS, DEBUG } from './config.js';
 import { createRenderer } from './engine/canvas.js';
 import { createLoop } from './engine/loop.js';
 import { createInput } from './engine/input.js';
@@ -6,8 +6,9 @@ import { createAudio } from './engine/audio.js';
 import { createGame, STATE } from './game/states.js';
 import { createBackground } from './game/background.js';
 import { SKINS, stepSkin } from './game/skins.js';
-import { getSkinIndex, setSkinIndex } from './platform/storage.js';
-import { t, skinName } from './locale.js';
+import { getSkinIndex, setSkinIndex, connectCloud, loadProgress } from './platform/storage.js';
+import { createSdk } from './platform/sdk.js';
+import { t, skinName, setLanguage } from './locale.js';
 
 /**
  * Шрифт нарочно круглый и детский. Порядок стека и решает вид: на Windows
@@ -23,8 +24,12 @@ const canvas = document.getElementById('game');
 const renderer = createRenderer(canvas);
 const { ctx, view } = renderer;
 const audio = createAudio();
-const game = createGame(audio);
+const sdk = createSdk();
 const background = createBackground();
+
+/** Создаётся в boot, после того как прогресс загружен из облака. */
+let game = null;
+let loop = null;
 
 /**
  * Кнопки хранятся в мировых координатах, а тап переводится в мир — а не
@@ -38,11 +43,17 @@ const buttons = {
   previousSkin: { x: 0, y: 0, radius: 0, active: false },
   nextSkin: { x: 0, y: 0, radius: 0, active: false },
   buySkin: { x: 0, y: 0, radius: 0, active: false },
+  reward: { x: 0, y: 0, radius: 0, active: false },
 };
 
 /** Надетый скин — и отдельно курсор магазина: листать можно и то, что не куплено. */
-let skinIndex = getSkinIndex();
-let browseIndex = skinIndex;
+let skinIndex = 0;
+let browseIndex = 0;
+
+/** Для рекламы: сколько раз умирали за сессию и брали ли уже награду в этой партии. */
+let deaths = 0;
+let rewardTaken = false;
+let previousState = null;
 
 function currentSkin() {
   return SKINS[Math.min(Math.max(skinIndex, 0), SKINS.length - 1)];
@@ -58,14 +69,6 @@ function applySkin() {
   SPARKS.trail.color = skin.body;
   SPARKS.flap.color = skin.belly;
 }
-
-// Хранилище могло обнулиться — тогда надетый скин окажется неоплаченным,
-// и надо честно откатиться на бесплатный.
-if (!game.wallet.isOwned(skinIndex)) {
-  skinIndex = 0;
-  browseIndex = 0;
-}
-applySkin();
 
 function wear(index) {
   skinIndex = index;
@@ -93,30 +96,6 @@ function buyBrowsedSkin() {
 // от частоты кадров. Копим флаг, забираем в update на границе шага.
 let flapRequested = false;
 
-createInput(canvas, {
-  onFlap(x, y) {
-    // Единственное место, где жест пользователя ещё «свежий»: браузеры не дают
-    // заводить AudioContext вне обработчика ввода.
-    audio.unlock();
-    if (pressButton(x, y)) return;
-    flapRequested = true;
-  },
-  onToggleSound() {
-    audio.unlock();
-    audio.toggle();
-  },
-  onPause() {
-    if (game.state === STATE.playing) game.pause();
-    else if (game.state === STATE.paused) game.resume();
-  },
-});
-
-// Свернули вкладку посреди партии — ставим на паузу, а не роняем игрока об пол.
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) game.pause();
-});
-window.addEventListener('blur', () => game.pause());
-
 function pressButton(cssX, cssY) {
   if (Number.isNaN(cssX)) return false;
   const worldX = view.left + cssX / view.scale;
@@ -135,6 +114,7 @@ function pressButton(cssX, cssY) {
     else if (name === 'previousSkin') cycleSkin(-1);
     else if (name === 'nextSkin') cycleSkin(1);
     else if (name === 'buySkin') buyBrowsedSkin();
+    else if (name === 'reward') watchRewardedAd();
     return true;
   }
   return false;
@@ -217,6 +197,67 @@ function update(dt) {
   game.update(dt);
   // Музыка густеет вместе со сложностью — тем же числом, что гонит мир.
   audio.setIntensity(game.difficulty.progress);
+
+  if (game.state !== previousState) {
+    handleStateChange(previousState, game.state);
+    previousState = game.state;
+  }
+}
+
+/**
+ * Площадка просит размечать игровой процесс: старт при возобновлении, стоп при
+ * паузе, смерти и показе рекламы. У нас это ровно вход и выход из playing.
+ */
+function handleStateChange(from, to) {
+  if (to === STATE.playing) sdk.gameplayStart();
+  else if (from === STATE.playing) sdk.gameplayStop();
+  if (to === STATE.dead) handleDeath();
+}
+
+function handleDeath() {
+  deaths++;
+  rewardTaken = false;
+  // В лидерборд уходит рекорд, а не результат партии: так число в таблице
+  // всегда совпадает с тем, что игрок видит у себя на экране.
+  sdk.submitScore(game.score.best);
+
+  // Первые смерти не трогаем совсем: реклама в первые полминуты знакомства
+  // убивает игру. Дальше — раз в несколько смертей, а частоту сверх этого
+  // всё равно ограничивает сама площадка.
+  const shown = deaths - ADS.skipFirstDeaths;
+  if (shown > 0 && shown % ADS.everyNthDeath === 0) showInterstitial();
+}
+
+function showInterstitial() {
+  sdk.gameplayStop();
+  audio.suspend();
+  sdk.showInterstitial({
+    onClose: () => {
+      audio.resume();
+      // Геймплей после рекламы возобновляем только если игрок уже вернулся
+      // в партию — на экране смерти он всё ещё стоит.
+      if (game.state === STATE.playing) sdk.gameplayStart();
+    },
+  });
+}
+
+function watchRewardedAd() {
+  if (rewardTaken) return;
+  sdk.gameplayStop();
+  audio.suspend();
+  sdk.showRewarded({
+    onRewarded: () => {
+      rewardTaken = true;
+      // Начисляем недостающее до множителя: earned уже лежит в кошельке.
+      game.wallet.add(game.wallet.earned * (ADS.rewardMultiplier - 1));
+      game.wallet.commit();
+      audio.play('coin');
+    },
+    onClose: () => {
+      audio.resume();
+      if (game.state === STATE.playing) sdk.gameplayStart();
+    },
+  });
 }
 
 function render(alpha) {
@@ -470,6 +511,7 @@ function renderHud() {
   buttons.previousSkin.active = false;
   buttons.nextSkin.active = false;
   buttons.buySkin.active = false;
+  buttons.reward.active = false;
 
   if (game.state === STATE.ready) {
     const skin = SKINS[browseIndex];
@@ -521,23 +563,33 @@ function renderHud() {
     ctx.fillStyle = COLORS.deadVeil;
     ctx.fillRect(0, 0, view.bufferWidth, view.bufferHeight);
 
-    write(t('score'), HUD.labelSize, 30, COLORS.hudDim);
-    write(String(game.score.current), HUD.scoreSize, 42, COLORS.hudStrong);
+    write(t('score'), HUD.labelSize, 28, COLORS.hudDim);
+    write(String(game.score.current), HUD.scoreSize, 39, COLORS.hudStrong);
     if (game.score.beaten) {
-      write(t('newRecord'), HUD.hintSize, 56, COLORS.record, 1 + Math.sin(game.clock * 5) * 0.05);
+      write(t('newRecord'), HUD.hintSize, 51, COLORS.record, 1 + Math.sin(game.clock * 5) * 0.05);
     } else {
-      write(`${t('record')} ${game.score.best}`, HUD.hintSize, 56, COLORS.hud);
+      write(`${t('record')} ${game.score.best}`, HUD.hintSize, 51, COLORS.hud);
     }
     if (wallet.earned > 0) {
-      write(`● +${wallet.earned}`, HUD.labelSize, 67, COLORS.coin);
+      write(`● +${wallet.earned}`, HUD.labelSize, 61, COLORS.coin);
+    }
+
+    // Ролик предлагаем только когда есть что удваивать и когда площадка вообще
+    // умеет его показать. Без SDK кнопки просто нет.
+    if (sdk.available && !rewardTaken && wallet.earned > 0) {
+      buttons.reward.active = true;
+      buttons.reward.x = VIEW.coreWidth / 2;
+      buttons.reward.y = 71;
+      buttons.reward.radius = 9;
+      write(`● ×${ADS.rewardMultiplier} — ${t('doubleCoins')}`, HUD.labelSize * 0.85, 71, COLORS.coin);
     }
 
     // Пока пауза после смерти не истекла, подсказка приглушена — тап всё равно
     // не сработает, и нечестно предлагать то, что не отвечает.
     ctx.globalAlpha = appear * (game.restartArmed ? breathe : 0.3);
-    write(t('tapToRetry'), HUD.hintSize, 78, COLORS.hud);
+    write(t('tapToRetry'), HUD.hintSize, 81, COLORS.hud);
     ctx.globalAlpha = appear * 0.7;
-    write(t('homeHint'), HUD.labelSize * 0.85, 88, COLORS.hudDim);
+    write(t('homeHint'), HUD.labelSize * 0.85, 90, COLORS.hudDim);
   }
 
   ctx.globalAlpha = 1;
@@ -682,11 +734,66 @@ function renderStats() {
   }
 }
 
-const loop = createLoop({
-  update,
-  render,
-  step: LOOP.step,
-  maxFrameTime: LOOP.maxFrameTime,
-});
+/**
+ * Старт игры.
+ *
+ * Порядок здесь не случаен. Сначала поднимаем площадку и забираем прогресс —
+ * только после этого создаём мир, иначе рекорд и монеты успели бы отрисоваться
+ * нулями и подскочить у игрока на глазах. Про готовность сообщаем в самом
+ * конце, когда рисовать уже есть что: до этого площадка держит свой загрузчик.
+ *
+ * Ни один шаг не обязателен. Без SDK всё это тихо вырождается в локальную
+ * игру — ровно так она и работает на GitHub Pages.
+ */
+async function boot() {
+  await sdk.init();
+  connectCloud(sdk);
+  if (sdk.language) setLanguage(sdk.language);
+  await loadProgress();
 
-loop.start();
+  game = createGame(audio);
+  previousState = game.state;
+
+  skinIndex = getSkinIndex();
+  // Прогресс мог не догрузиться или обнулиться — тогда надетый скин окажется
+  // неоплаченным, и надо честно откатиться на бесплатный.
+  if (!game.wallet.isOwned(skinIndex)) skinIndex = 0;
+  browseIndex = skinIndex;
+  applySkin();
+
+  createInput(canvas, {
+    onFlap(x, y) {
+      // Единственное место, где жест пользователя ещё «свежий»: браузеры не дают
+      // заводить AudioContext вне обработчика ввода.
+      audio.unlock();
+      if (pressButton(x, y)) return;
+      flapRequested = true;
+    },
+    onToggleSound() {
+      audio.unlock();
+      audio.toggle();
+    },
+    onPause() {
+      if (game.state === STATE.playing) game.pause();
+      else if (game.state === STATE.paused) game.resume();
+    },
+  });
+
+  // Свернули вкладку посреди партии — ставим на паузу, а не роняем игрока об пол.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) game.pause();
+  });
+  window.addEventListener('blur', () => game.pause());
+
+  loop = createLoop({
+    update,
+    render,
+    step: LOOP.step,
+    maxFrameTime: LOOP.maxFrameTime,
+  });
+  loop.start();
+
+  sdk.signalReady();
+}
+
+boot();

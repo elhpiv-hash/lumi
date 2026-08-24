@@ -33,6 +33,16 @@ export function createAudio() {
     else if (enabled) context.resume();
   }
 
+  // Требование площадки: при потере фокуса звук обязан замолкать. Скрытая
+  // вкладка и окно, ушедшее на второй план, — разные события, нужны оба.
+  function onBlur() {
+    if (context) context.suspend();
+  }
+
+  function onFocus() {
+    if (context && enabled) context.resume();
+  }
+
   function unlock() {
     if (context || broken || !enabled) return;
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -55,6 +65,8 @@ export function createAudio() {
 
       music.start(context, musicBus);
       document.addEventListener('visibilitychange', onVisibilityChange);
+      window.addEventListener('blur', onBlur);
+      window.addEventListener('focus', onFocus);
     } catch {
       broken = true;
       context = null;
@@ -99,10 +111,21 @@ export function createAudio() {
     return enabled;
   }
 
+  /** Замолчать, не трогая пользовательскую настройку: на время рекламы. */
+  function suspend() {
+    if (context) context.suspend();
+  }
+
+  function resume() {
+    if (context && enabled) context.resume();
+  }
+
   return {
     unlock,
     play,
     toggle,
+    suspend,
+    resume,
     setIntensity: music.setIntensity,
     get enabled() { return enabled; },
   };

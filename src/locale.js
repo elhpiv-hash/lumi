@@ -22,6 +22,7 @@ const DICTIONARIES = {
     newRecord: 'новый рекорд!',
     record: 'рекорд',
     tapToRetry: 'тап — ещё раз',
+    doubleCoins: 'удвоить за ролик',
     skins: {
       ember: 'Огонёк',
       ice: 'Льдинка',
@@ -43,6 +44,7 @@ const DICTIONARIES = {
     newRecord: 'new record!',
     record: 'best',
     tapToRetry: 'tap to retry',
+    doubleCoins: 'double for an ad',
     skins: {
       ember: 'Ember',
       ice: 'Frost',

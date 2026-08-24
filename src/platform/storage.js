@@ -1,83 +1,39 @@
 /**
- * Адаптер хранилища. Снаружи — два синхронных вызова, внутри сейчас
- * localStorage, а на шаге 9 его заменит Yandex Player API.
+ * Хранилище прогресса. Снаружи — синхронные геттеры и сеттеры, внутри две
+ * копии: локальная и облачная.
  *
- * Кэш в памяти нужен не для скорости, а ради этой будущей замены: Player API
- * асинхронный, и на шаге 9 достаточно будет один раз залить в кэш загруженное
- * значение при старте — сигнатуры getBest/setBest останутся синхронными и
- * вызывающий код менять не придётся.
+ * Синхронный интерфейс с кэшем был заложен ещё тогда, когда никакого облака
+ * не было, — ровно ради этого момента. Player API асинхронный, но вызывающему
+ * коду об этом знать не нужно: при старте кэш один раз заполняется загруженным
+ * значением, дальше всё читается из памяти.
  *
- * Обращения обёрнуты в try: на Яндекс Играх игра живёт в iframe, а там доступ
- * к localStorage может быть закрыт политикой сторонних кук. Тогда рекорд просто
- * не переживёт перезагрузку, но в пределах сессии продолжит работать.
+ * localStorage остаётся всегда: на Яндексе игра живёт в iframe, где доступ
+ * к нему может быть закрыт политикой сторонних кук, а на GitHub Pages нет
+ * облака. Две копии страхуют друг друга.
+ *
+ * В облако пишем через setStats, а не setData: документация советует его для
+ * часто меняющихся чисел, и лимит там мягче. Но и он ограничен, поэтому записи
+ * копятся и уходят не чаще раза в несколько секунд.
  */
-const BEST_KEY = 'lumi.best';
-const SKIN_KEY = 'lumi.skin';
-const COINS_KEY = 'lumi.coins';
-const OWNED_KEY = 'lumi.owned';
+const LOCAL_KEYS = {
+  best: 'lumi.best',
+  coins: 'lumi.coins',
+  owned: 'lumi.owned',
+  skin: 'lumi.skin',
+};
+const CLOUD_KEYS = Object.keys(LOCAL_KEYS);
+const CLOUD_MIN_INTERVAL_MS = 5000;
 
-let cached = null;
-let cachedSkin = null;
-let cachedCoins = null;
-let cachedOwned = null;
+const cache = { best: null, coins: null, owned: null, skin: null };
 
-export function getBest() {
-  if (cached !== null) return cached;
+let sdk = null;
+let dirty = null;
+let lastFlushAt = -Infinity;
+let flushTimer = 0;
 
-  let stored = 0;
+function readLocal(name) {
   try {
-    const value = Number(localStorage.getItem(BEST_KEY));
-    if (Number.isFinite(value) && value > 0) stored = Math.floor(value);
-  } catch {
-    stored = 0;
-  }
-
-  cached = stored;
-  return cached;
-}
-
-export function setBest(value) {
-  cached = value;
-  try {
-    localStorage.setItem(BEST_KEY, String(value));
-  } catch {
-    // Записать не вышло — рекорд останется только на эту сессию.
-  }
-}
-
-/**
- * Выбранный скин. Хранится один индекс: список открытого выводится из рекорда,
- * поэтому отдельного счётчика разблокировок не нужно и рассинхронизироваться
- * им не с чем.
- */
-export function getSkinIndex() {
-  if (cachedSkin !== null) return cachedSkin;
-
-  let stored = 0;
-  try {
-    const value = Number(localStorage.getItem(SKIN_KEY));
-    if (Number.isFinite(value) && value >= 0) stored = Math.floor(value);
-  } catch {
-    stored = 0;
-  }
-
-  cachedSkin = stored;
-  return cachedSkin;
-}
-
-export function setSkinIndex(value) {
-  cachedSkin = value;
-  try {
-    localStorage.setItem(SKIN_KEY, String(value));
-  } catch {
-    // Записать не вышло — выбор останется только на эту сессию.
-  }
-}
-
-/** Целое неотрицательное из хранилища, или 0. Общий разбор для кошелька и маски. */
-function readNumber(key) {
-  try {
-    const value = Number(localStorage.getItem(key));
+    const value = Number(localStorage.getItem(LOCAL_KEYS[name]));
     if (Number.isFinite(value) && value > 0) return Math.floor(value);
   } catch {
     return 0;
@@ -85,31 +41,88 @@ function readNumber(key) {
   return 0;
 }
 
-function writeNumber(key, value) {
+function writeLocal(name, value) {
   try {
-    localStorage.setItem(key, String(value));
+    localStorage.setItem(LOCAL_KEYS[name], String(value));
   } catch {
-    // Записать не вышло — прогресс останется только на эту сессию.
+    // Хранилище закрыто — прогресс проживёт сессию, а в облако всё равно уйдёт.
   }
 }
 
-export function getCoins() {
-  if (cachedCoins === null) cachedCoins = readNumber(COINS_KEY);
-  return cachedCoins;
+function flushCloud() {
+  flushTimer = 0;
+  if (!dirty || !sdk) return;
+  lastFlushAt = Date.now();
+  const payload = dirty;
+  dirty = null;
+  sdk.saveStats(payload);
 }
 
-export function setCoins(value) {
-  cachedCoins = value;
-  writeNumber(COINS_KEY, value);
+/** Копим изменения и отправляем пачкой: у setStats есть лимит частоты. */
+function scheduleCloud(name, value) {
+  if (!sdk) return;
+  if (dirty === null) dirty = {};
+  dirty[name] = value;
+
+  if (flushTimer !== 0) return;
+  const wait = Math.max(0, CLOUD_MIN_INTERVAL_MS - (Date.now() - lastFlushAt));
+  flushTimer = setTimeout(flushCloud, wait);
 }
+
+function get(name) {
+  if (cache[name] === null) cache[name] = readLocal(name);
+  return cache[name];
+}
+
+function set(name, value) {
+  cache[name] = value;
+  writeLocal(name, value);
+  scheduleCloud(name, value);
+}
+
+/** Подключить площадку. До вызова хранилище работает чисто локально. */
+export function connectCloud(platform) {
+  sdk = platform && platform.hasCloud ? platform : null;
+}
+
+/**
+ * Забрать прогресс из облака в кэш. Вызывается один раз до старта партии,
+ * поэтому дальше синхронные геттеры отдают уже верные значения.
+ *
+ * Облако главнее локальной копии: игрок мог играть на другом устройстве.
+ * Но если в облаке пусто, а локально что-то есть — оставляем локальное
+ * и сразу отправляем наверх, иначе прогресс первого запуска потерялся бы.
+ */
+export async function loadProgress() {
+  for (const name of CLOUD_KEYS) get(name);
+  if (!sdk) return false;
+
+  const stats = await sdk.loadStats(CLOUD_KEYS);
+  if (!stats) return false;
+
+  let restored = false;
+  for (const name of CLOUD_KEYS) {
+    const value = stats[name];
+    if (Number.isFinite(value) && value >= 0) {
+      cache[name] = Math.floor(value);
+      writeLocal(name, cache[name]);
+      restored = true;
+    } else if (cache[name] > 0) {
+      scheduleCloud(name, cache[name]);
+    }
+  }
+  return restored;
+}
+
+export function getBest() { return get('best'); }
+export function setBest(value) { set('best', value); }
+
+export function getCoins() { return get('coins'); }
+export function setCoins(value) { set('coins', value); }
 
 /** Купленные скины — битовая маска в одном числе. */
-export function getOwnedSkins() {
-  if (cachedOwned === null) cachedOwned = readNumber(OWNED_KEY);
-  return cachedOwned;
-}
+export function getOwnedSkins() { return get('owned'); }
+export function setOwnedSkins(value) { set('owned', value); }
 
-export function setOwnedSkins(value) {
-  cachedOwned = value;
-  writeNumber(OWNED_KEY, value);
-}
+export function getSkinIndex() { return get('skin'); }
+export function setSkinIndex(value) { set('skin', value); }

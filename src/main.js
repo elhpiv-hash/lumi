@@ -7,6 +7,7 @@ import { createGame, STATE } from './game/states.js';
 import { createBackground } from './game/background.js';
 import { SKINS, stepSkin } from './game/skins.js';
 import { getSkinIndex, setSkinIndex } from './platform/storage.js';
+import { t, skinName } from './locale.js';
 
 /**
  * Шрифт нарочно круглый и детский. Порядок стека и решает вид: на Windows
@@ -478,17 +479,17 @@ function renderHud() {
     write(`● ${wallet.total}`, HUD.labelSize, 13, COLORS.coin);
     write('LUMI', HUD.titleSize, 31, COLORS.hudStrong, 1 + Math.sin(game.clock * 1.6) * 0.03);
     ctx.globalAlpha = appear * breathe;
-    write('тап, чтобы лететь', HUD.hintSize, 58, COLORS.hud);
+    write(t('tapToFly'), HUD.hintSize, 58, COLORS.hud);
 
     ctx.globalAlpha = appear;
-    write(skin.name, HUD.labelSize, HUD.arrowY, owned ? COLORS.hudStrong : COLORS.hudDim);
+    write(skinName(skin.id), HUD.labelSize, HUD.arrowY, owned ? COLORS.hudStrong : COLORS.hudDim);
     buttons.previousSkin.active = true;
     buttons.nextSkin.active = true;
     renderSkinArrows();
 
     if (owned) {
       // Купленное надевается сразу при листании, поэтому вариант тут ровно один.
-      write('надет', HUD.labelSize * 0.8, HUD.arrowY + 9, COLORS.hudDim);
+      write(t('equipped'), HUD.labelSize * 0.8, HUD.arrowY + 9, COLORS.hudDim);
     } else {
       const affordable = wallet.total >= skin.price;
       buttons.buySkin.active = affordable;
@@ -496,7 +497,7 @@ function renderHud() {
       buttons.buySkin.y = HUD.arrowY + 9;
       buttons.buySkin.radius = 8;
       ctx.globalAlpha = appear * (affordable ? 1 : 0.5);
-      write(`● ${skin.price} — купить`, HUD.labelSize * 0.85, HUD.arrowY + 9,
+      write(`● ${skin.price} — ${t('buy')}`, HUD.labelSize * 0.85, HUD.arrowY + 9,
         affordable ? COLORS.coin : COLORS.hudDim);
     }
   } else if (game.state === STATE.playing) {
@@ -510,22 +511,22 @@ function renderHud() {
     ctx.globalAlpha = appear;
     ctx.fillStyle = COLORS.deadVeil;
     ctx.fillRect(0, 0, view.bufferWidth, view.bufferHeight);
-    write('пауза', HUD.titleSize * 0.8, 40, COLORS.hudStrong);
+    write(t('paused'), HUD.titleSize * 0.8, 40, COLORS.hudStrong);
     ctx.globalAlpha = appear * breathe;
-    write('тап — продолжить', HUD.hintSize, 58, COLORS.hud);
+    write(t('tapToResume'), HUD.hintSize, 58, COLORS.hud);
     ctx.globalAlpha = appear * 0.7;
-    write('домик слева — в меню', HUD.labelSize * 0.85, 70, COLORS.hudDim);
+    write(t('homeHint'), HUD.labelSize * 0.85, 70, COLORS.hudDim);
   } else {
     ctx.globalAlpha = appear;
     ctx.fillStyle = COLORS.deadVeil;
     ctx.fillRect(0, 0, view.bufferWidth, view.bufferHeight);
 
-    write('счёт', HUD.labelSize, 30, COLORS.hudDim);
+    write(t('score'), HUD.labelSize, 30, COLORS.hudDim);
     write(String(game.score.current), HUD.scoreSize, 42, COLORS.hudStrong);
     if (game.score.beaten) {
-      write('новый рекорд!', HUD.hintSize, 56, COLORS.record, 1 + Math.sin(game.clock * 5) * 0.05);
+      write(t('newRecord'), HUD.hintSize, 56, COLORS.record, 1 + Math.sin(game.clock * 5) * 0.05);
     } else {
-      write(`рекорд ${game.score.best}`, HUD.hintSize, 56, COLORS.hud);
+      write(`${t('record')} ${game.score.best}`, HUD.hintSize, 56, COLORS.hud);
     }
     if (wallet.earned > 0) {
       write(`● +${wallet.earned}`, HUD.labelSize, 67, COLORS.coin);
@@ -534,9 +535,9 @@ function renderHud() {
     // Пока пауза после смерти не истекла, подсказка приглушена — тап всё равно
     // не сработает, и нечестно предлагать то, что не отвечает.
     ctx.globalAlpha = appear * (game.restartArmed ? breathe : 0.3);
-    write('тап — ещё раз', HUD.hintSize, 78, COLORS.hud);
+    write(t('tapToRetry'), HUD.hintSize, 78, COLORS.hud);
     ctx.globalAlpha = appear * 0.7;
-    write('домик слева — в меню', HUD.labelSize * 0.85, 88, COLORS.hudDim);
+    write(t('homeHint'), HUD.labelSize * 0.85, 88, COLORS.hudDim);
   }
 
   ctx.globalAlpha = 1;
@@ -664,7 +665,7 @@ function renderStats() {
     `${game.state}  счёт ${game.score.current}  рекорд ${game.score.best}`,
     `путь ${game.difficulty.distance.toFixed(0)} скор ${game.difficulty.speed.toFixed(1)}`,
     `биом ${game.biome.palette.name} #${game.biome.index} смесь ${game.biome.blend.toFixed(2)}`,
-    `скин ${currentSkin().name} витрина ${SKINS[browseIndex].name} куплено ${game.wallet.ownedCount}/${SKINS.length}`,
+    `скин ${skinName(currentSkin().id)} витрина ${skinName(SKINS[browseIndex].id)} куплено ${game.wallet.ownedCount}/${SKINS.length}`,
     `монет ${game.wallet.total} (+${game.wallet.earned}) на поле ${game.coins.alive}/${game.coins.allocated}`,
     `лиан ${game.obstacles.alive}/${game.obstacles.allocated} искр ${game.particles.alive}/${game.particles.allocated}`,
     `буфер ${view.bufferWidth}x${view.bufferHeight} ups ${ups.toFixed(0)}`,

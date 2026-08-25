@@ -56,6 +56,9 @@ const DICTIONARIES = {
   },
 };
 
+/** Порядок важен: он же порядок флажков на экране и индекс в хранилище. */
+export const LANGUAGES = ['ru', 'en'];
+
 const FALLBACK = 'ru';
 let current = FALLBACK;
 

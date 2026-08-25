@@ -6,9 +6,9 @@ import { createAudio } from './engine/audio.js';
 import { createGame, STATE } from './game/states.js';
 import { createBackground } from './game/background.js';
 import { SKINS, stepSkin } from './game/skins.js';
-import { getSkinIndex, setSkinIndex, connectCloud, loadProgress } from './platform/storage.js';
+import { getSkinIndex, setSkinIndex, getLanguageChoice, setLanguageChoice, connectCloud, loadProgress } from './platform/storage.js';
 import { createSdk } from './platform/sdk.js';
-import { t, skinName, setLanguage } from './locale.js';
+import { t, skinName, setLanguage, getLanguage, LANGUAGES } from './locale.js';
 
 /**
  * Шрифт нарочно круглый и детский. Порядок стека и решает вид: на Windows
@@ -44,6 +44,8 @@ const buttons = {
   nextSkin: { x: 0, y: 0, radius: 0, active: false },
   buySkin: { x: 0, y: 0, radius: 0, active: false },
   reward: { x: 0, y: 0, radius: 0, active: false },
+  langRu: { x: 0, y: 0, radius: 0, active: false },
+  langEn: { x: 0, y: 0, radius: 0, active: false },
 };
 
 /** Надетый скин — и отдельно курсор магазина: листать можно и то, что не куплено. */
@@ -74,6 +76,19 @@ function wear(index) {
   skinIndex = index;
   setSkinIndex(index);
   applySkin();
+}
+
+/**
+ * Явный выбор языка перебивает автоопределение — и запоминается. Пока выбора
+ * не было, язык берётся из площадки: так игрок, впервые открывший игру
+ * в английском интерфейсе Яндекса, сразу видит английский.
+ */
+function chooseLanguage(index) {
+  const code = LANGUAGES[index];
+  if (!code || getLanguage() === code) return;
+  setLanguage(code);
+  setLanguageChoice(index + 1);
+  audio.play('score');
 }
 
 function cycleSkin(direction) {
@@ -115,6 +130,8 @@ function pressButton(cssX, cssY) {
     else if (name === 'nextSkin') cycleSkin(1);
     else if (name === 'buySkin') buyBrowsedSkin();
     else if (name === 'reward') watchRewardedAd();
+    else if (name === 'langRu') chooseLanguage(0);
+    else if (name === 'langEn') chooseLanguage(1);
     return true;
   }
   return false;
@@ -512,6 +529,8 @@ function renderHud() {
   buttons.nextSkin.active = false;
   buttons.buySkin.active = false;
   buttons.reward.active = false;
+  buttons.langRu.active = false;
+  buttons.langEn.active = false;
 
   if (game.state === STATE.ready) {
     const skin = SKINS[browseIndex];
@@ -528,6 +547,7 @@ function renderHud() {
     buttons.previousSkin.active = true;
     buttons.nextSkin.active = true;
     renderSkinArrows();
+    renderLanguageFlags();
 
     if (owned) {
       // Купленное надевается сразу при листании, поэтому вариант тут ровно один.
@@ -594,6 +614,76 @@ function renderHud() {
 
   ctx.globalAlpha = 1;
   renderCornerButtons();
+}
+
+/**
+ * Флаги настоящими цветами: условные значки языка в пикселях не читаются,
+ * а полосы российского и звёздно-полосатый узнаются даже в двадцать пикселей
+ * шириной. Активный горит в полную силу и обведён, неактивный приглушён.
+ */
+function drawFlag(code, left, top, width, height, active) {
+  ctx.globalAlpha = active ? 1 : 0.4;
+
+  ctx.fillStyle = COLORS.textOutline;
+  pixelRect(left - UNIT, top - UNIT, width + UNIT * 2, height + UNIT * 2);
+
+  if (code === 'ru') {
+    const band = height / 3;
+    ctx.fillStyle = COLORS.ruWhite;
+    pixelRect(left, top, width, band);
+    ctx.fillStyle = COLORS.ruBlue;
+    pixelRect(left, top + band, width, band);
+    ctx.fillStyle = COLORS.ruRed;
+    pixelRect(left, top + band * 2, width, band);
+  } else {
+    const stripes = 5;
+    const band = height / stripes;
+    for (let i = 0; i < stripes; i++) {
+      ctx.fillStyle = i % 2 === 0 ? COLORS.usRed : COLORS.usWhite;
+      pixelRect(left, top + band * i, width, band);
+    }
+    ctx.fillStyle = COLORS.usBlue;
+    pixelRect(left, top, width * 0.44, band * 3);
+    ctx.fillStyle = COLORS.usWhite;
+    for (let i = 0; i < 4; i++) {
+      pixelRect(
+        left + width * (0.1 + (i % 2) * 0.19),
+        top + band * (0.5 + Math.floor(i / 2) * 1.3),
+        UNIT, UNIT,
+      );
+    }
+  }
+
+  if (active) {
+    ctx.fillStyle = COLORS.hudStrong;
+    pixelRect(left - UNIT * 2, top - UNIT * 2, width + UNIT * 4, UNIT);
+    pixelRect(left - UNIT * 2, top + height + UNIT, width + UNIT * 4, UNIT);
+    pixelRect(left - UNIT * 2, top - UNIT, UNIT, height + UNIT * 2);
+    pixelRect(left + width + UNIT, top - UNIT, UNIT, height + UNIT * 2);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** Выбор языка живёт в левом верхнем углу — там, где во время партии пауза. */
+function renderLanguageFlags() {
+  renderer.beginWorld();
+  const width = HUD.flagWidth;
+  const height = HUD.flagHeight;
+  const top = HUD.muteMargin + (HUD.muteSize - height) / 2;
+  const current = getLanguage();
+
+  const flags = [
+    [buttons.langRu, 'ru', HUD.muteMargin],
+    [buttons.langEn, 'en', HUD.muteMargin + width + HUD.flagGap],
+  ];
+  for (const [button, code, left] of flags) {
+    button.active = true;
+    button.x = left + width / 2;
+    button.y = top + height / 2;
+    button.radius = (width + HUD.flagGap) / 2;
+    drawFlag(code, left, top, width, height, code === current);
+  }
+  renderer.beginScreen();
 }
 
 /** Треугольник из столбиков убывающей высоты — стрелка по пиксельной сетке. */
@@ -748,8 +838,12 @@ function renderStats() {
 async function boot() {
   await sdk.init();
   connectCloud(sdk);
-  if (sdk.language) setLanguage(sdk.language);
   await loadProgress();
+
+  // Порядок важен: сначала прогресс, потому что выбранный язык лежит в нём же.
+  const choice = getLanguageChoice();
+  if (choice > 0 && LANGUAGES[choice - 1]) setLanguage(LANGUAGES[choice - 1]);
+  else if (sdk.language) setLanguage(sdk.language);
 
   game = createGame(audio);
   previousState = game.state;

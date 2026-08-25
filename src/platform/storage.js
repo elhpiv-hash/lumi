@@ -20,11 +20,12 @@ const LOCAL_KEYS = {
   coins: 'lumi.coins',
   owned: 'lumi.owned',
   skin: 'lumi.skin',
+  lang: 'lumi.lang',
 };
 const CLOUD_KEYS = Object.keys(LOCAL_KEYS);
 const CLOUD_MIN_INTERVAL_MS = 5000;
 
-const cache = { best: null, coins: null, owned: null, skin: null };
+const cache = { best: null, coins: null, owned: null, skin: null, lang: null };
 
 let sdk = null;
 let dirty = null;
@@ -126,3 +127,12 @@ export function setOwnedSkins(value) { set('owned', value); }
 
 export function getSkinIndex() { return get('skin'); }
 export function setSkinIndex(value) { set('skin', value); }
+
+/**
+ * Выбранный игроком язык: 0 — не выбирал, дальше индекс в LANGUAGES плюс один.
+ * Ноль как «не выбирал» ложится ровно на общий разбор чисел и позволяет
+ * отличить осознанный выбор от его отсутствия: без выбора язык берётся
+ * из площадки, с выбором — перебивает её.
+ */
+export function getLanguageChoice() { return get('lang'); }
+export function setLanguageChoice(value) { set('lang', value); }

@@ -206,6 +206,14 @@ export const COLORS = {
   frameRgb: [26, 18, 52],
   deadVeil: 'rgba(40, 26, 78, 0.6)',
 
+  /** Флаги рисуем настоящими цветами, иначе они не читаются как флаги. */
+  ruWhite: '#ffffff',
+  ruBlue: '#0039a6',
+  ruRed: '#d52b1e',
+  usRed: '#b22234',
+  usWhite: '#ffffff',
+  usBlue: '#3c3b6e',
+
   textOutline: 'hsl(258, 55%, 20%)',
   hud: 'hsl(40, 80%, 95%)',
   hudStrong: 'hsl(48, 100%, 92%)',
@@ -288,6 +296,10 @@ export const HUD = {
   /** Кнопки в углах поля: размер и отступ, в wu. Пауза слева, звук справа. */
   muteSize: 5.0,
   muteMargin: 3.6,
+  /** Флажки выбора языка в левом верхнем углу стартового экрана. */
+  flagWidth: 7.0,
+  flagHeight: 4.6,
+  flagGap: 2.0,
   /** Стрелки выбора скина на стартовом экране. */
   arrowSize: 5.0,
   arrowOffset: 17,
